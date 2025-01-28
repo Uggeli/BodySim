@@ -222,6 +222,7 @@ public enum BodyResourceType
     Glucose,
     Water,
     Blood,
+    Calcium,
     // Waste
     CarbonDioxide,
 }
@@ -408,11 +409,12 @@ public abstract class BodyPartNodeBase(BodyPartType bodyPartType, List<BodyCompo
 
 
 
-public abstract class BodySystemBase(BodySystemType bodySystemType, BodyResourcePool bodyResourcePool) : IListener
+public abstract class BodySystemBase(BodySystemType bodySystemType, BodyResourcePool bodyResourcePool, EventHub eventHub) : IListener
 {
     public BodySystemType BodySystemType {get;} = bodySystemType;
     public BodyResourcePool BodyResourcePool {get;} = bodyResourcePool;
     public ConcurrentBag<IEvent> EventQueue {get; set;} = [];
+    protected EventHub EventHub {get;} = eventHub;
     protected Dictionary<BodyPartType, List<BodyPartType>> Connections = []; // Root, Chain
     protected Dictionary<BodyPartType, IBodySystemNode> Statuses = [];
     public abstract void HandleMessage(IEvent evt);
@@ -459,7 +461,19 @@ public readonly record struct DamageEvent(BodyPartType BodyPartType, int Damage)
 public readonly record struct HealEvent(BodyPartType BodyPartType, int Heal) : IEvent;
 public readonly record struct PainEvent(BodyPartType BodyPartType, int Pain) : IEvent;
 
+public class BoneNode: BodyPartNodeBase, IResourceNeedComponent
+{
+    public Dictionary<BodyResourceType, float> ResourceNeeds { get; } = [];
+    public BoneNode(BodyPartType bodyPartType) : base(bodyPartType, [
+        new BodyComponentBase(100, 100, 0, BodyComponentType.Health)
+    ])
+    {
+        ResourceNeeds[BodyResourceType.Calcium] = 0; // Increase on damage
+        ResourceNeeds[BodyResourceType.Glucose] = 0.1f; // minimal upkeep
+        ResourceNeeds[BodyResourceType.Water] = 0.1f; // minimal upkeep
 
+    }
+}
 
 public class SkeletalSystem : BodySystemBase
 {
@@ -475,13 +489,49 @@ public class SkeletalSystem : BodySystemBase
 
     public override void InitSystem()
     {
-        throw new NotImplementedException();
+        // Initialize basic skeletal hierarchy
+        Connections[BodyPartType.Head] = [BodyPartType.Neck];
+        Connections[BodyPartType.Neck] = [BodyPartType.Chest];
+        Connections[BodyPartType.Chest] = [
+            BodyPartType.LeftShoulder,
+            BodyPartType.RightShoulder,
+            BodyPartType.Abdomen
+        ];
+        Connections[BodyPartType.Abdomen] = [BodyPartType.Pelvis];
+        Connections[BodyPartType.Pelvis] = [BodyPartType.Hips];
+        
+        // Arms
+        Connections[BodyPartType.LeftShoulder] = [BodyPartType.LeftUpperArm];
+        Connections[BodyPartType.LeftUpperArm] = [BodyPartType.LeftForearm];
+        Connections[BodyPartType.LeftForearm] = [BodyPartType.LeftHand];
+        
+        Connections[BodyPartType.RightShoulder] = [BodyPartType.RightUpperArm];
+        Connections[BodyPartType.RightUpperArm] = [BodyPartType.RightForearm];
+        Connections[BodyPartType.RightForearm] = [BodyPartType.RightHand];
+        
+        // Legs
+        Connections[BodyPartType.Hips] = [BodyPartType.LeftThigh, BodyPartType.RightThigh];
+        Connections[BodyPartType.LeftThigh] = [BodyPartType.LeftLeg];
+        Connections[BodyPartType.LeftLeg] = [BodyPartType.LeftFoot];
+        Connections[BodyPartType.RightThigh] = [BodyPartType.RightLeg];
+        Connections[BodyPartType.RightLeg] = [BodyPartType.RightFoot];
+
+        // Initialize bone nodes for each body part
+        foreach (BodyPartType partType in Enum.GetValues<BodyPartType>())
+        {
+            Statuses[partType] = new BoneNode(partType);
+        }
     }
 }
 
 
-public class CirculatorySystem(BodySystemType bodySystemType, BodyResourcePool pool) : BodySystemBase(bodySystemType, pool)
+public class CirculatorySystem : BodySystemBase
 {
+    public CirculatorySystem(BodyResourcePool pool) : base(BodySystemType.Circulatory, pool)
+    {
+        InitSystem();
+    }
+
     public override void HandleMessage(IEvent evt)
     {
         throw new NotImplementedException();
