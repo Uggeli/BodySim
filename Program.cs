@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using System.ComponentModel;
 
 internal class Program
 {
@@ -181,6 +182,7 @@ public enum SystemNodeStatus : byte
     Starving_severe = 1 << 3, // Soon we get to raise flag 0x80
     ConnectedToRoot = 1 << 4,
     Tired = 1 << 5,  // LowStamina
+    Disabled = 1 << 6, // Disabled
 }
 
 public enum BodyPartType: byte
@@ -222,8 +224,6 @@ public enum BodyResourceType
     Blood,
     // Waste
     CarbonDioxide,
-
-
 }
 
 public interface IBodySystemNode
@@ -315,71 +315,96 @@ public interface IResourceProductionComponent
             }
         }
     }
+
+    public Dictionary<BodyResourceType, float> ProduceResources()
+    {
+        var resources = new Dictionary<BodyResourceType, float>(ResourceProduction);
+        ResourceProduction.Clear();
+        return resources;
+    }
 }
 
-
-public interface IHealthComponent
+public interface IResourceComponent
 {
-    float Health { get; set; }
-    float MaxHealth { get; set; }
-    public void ApplyHealthDamage(float amount)
+    float Current { get; set; }
+    float Max { get; set; }
+    float RegenRate { get; set; }
+    BodyComponentType ComponentType { get; }
+    public float Increase(float amount)
     {
-        Health -= amount;
-        if (Health <= 0)
+        Current += amount;
+        if (Current > Max)
         {
-            Health = 0;
+            Current = Max;
         }
+        return Current;
     }
-    public void ApplyHealthHealing(float amount)
+
+    public float Decrease(float amount)
     {
-        Health += amount;
-        if (Health > MaxHealth)
+        Current -= amount;
+        if (Current < 0)
         {
-            Health = MaxHealth;
+            Current = 0;
         }
+        return Current;
+    }
+
+    public float Regenerate()
+    {
+        Current += RegenRate;
+        if (Current > Max)
+        {
+            Current = Max;
+        }
+        return Current;
     }
 }
-public interface IStaminaComponent
+
+public enum BodyComponentType: byte
 {
-    float Stamina { get; set; }
-    float MaxStamina { get; set; }
-    public void ApplyStaminaDamage(float amount)
-    {
-        Stamina -= amount;
-        if (Stamina <= 0)
-        {
-            Stamina = 0;
-        }
-    }
-
-    public void ApplyHealthHealing(float amount)
-    {
-        Stamina += amount;
-        if (Stamina > MaxStamina)
-        {
-            Stamina = MaxStamina;
-        }
-    }
+    None,
+    Health,
+    Stamina,
+    Mana,
 }
 
-public abstract class BodyPartNodeBase(BodyPartType bodyPartType) : IBodySystemNode
+
+public class BodyComponentBase(float current = 100, float max = 100, float regenRate = 1f, BodyComponentType bodyComponentType = BodyComponentType.None) : IResourceComponent
+{
+    public BodyComponentType ComponentType { get; set; } = bodyComponentType;
+    public float Current { get; set; } = current;
+    public float Max { get; set; } = max;
+    public float RegenRate { get; set; } = regenRate;
+}
+
+
+public abstract class BodyPartNodeBase(BodyPartType bodyPartType, List<BodyComponentBase> components) : IBodySystemNode
 {
     public BodyPartType BodyPartType {get; set;} = bodyPartType;
+    public List<BodyComponentBase> Components {get; set;} = components;
     public SystemNodeStatus Status {get; set;} = SystemNodeStatus.Healthy;
+    public bool HasComponent(BodyComponentType componentType)
+    {
+        return Components.Any(c => c.ComponentType == componentType);
+    }
+
+    public IResourceComponent? GetComponent(BodyComponentType componentType)
+    {
+        return Components.FirstOrDefault(c => c.ComponentType == componentType);
+    }
+
+    public void AddComponent(BodyComponentType componentType, float current = 100, float max = 100, float regenRate = 1f)
+    {
+        if (HasComponent(componentType)) return;
+        Components.Add(new BodyComponentBase(current, max, regenRate, componentType));
+    }
+
+    public void RemoveComponent(BodyComponentType componentType)
+    {
+        Components.RemoveAll(c => c.ComponentType == componentType);
+    }
 }
-
-public class BoneNode(BodyPartType bodyPartType) : BodyPartNodeBase(bodyPartType), IHealthComponent, IStaminaComponent, IResourceNeedComponent
-{
-    public float Health { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
-    public float MaxHealth { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
-    public float Stamina { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
-    public float MaxStamina { get => throw new NotImplementedException(); set => throw new NotImplementedException(); }
-
-    public Dictionary<BodyResourceType, float> ResourceNeeds => throw new NotImplementedException();
-}
-
-
-
 
 
 
@@ -391,6 +416,7 @@ public abstract class BodySystemBase(BodySystemType bodySystemType, BodyResource
     protected Dictionary<BodyPartType, List<BodyPartType>> Connections = []; // Root, Chain
     protected Dictionary<BodyPartType, IBodySystemNode> Statuses = [];
     public abstract void HandleMessage(IEvent evt);
+    public abstract void InitSystem(); // Initialize the system
     public SystemNodeStatus? GetNodeStatus(BodyPartType bodyPartType)
     {
         if (Statuses.TryGetValue(bodyPartType, out IBodySystemNode? value))
@@ -414,6 +440,15 @@ public abstract class BodySystemBase(BodySystemType bodySystemType, BodyResource
             {
                 BodyResourcePool.SetResources(resourceNeedComponent.SatisfyResourceNeeds(BodyResourcePool.GetResources()));
             }
+            if (node is IResourceProductionComponent resourceProductionComponent)
+            {
+                foreach ((BodyResourceType type, float amount) in resourceProductionComponent.ProduceResources())
+                {
+                    BodyResourcePool.AddResource(type, amount);
+                }
+            }
+
+
         }
     }
 }
@@ -425,18 +460,34 @@ public readonly record struct HealEvent(BodyPartType BodyPartType, int Heal) : I
 public readonly record struct PainEvent(BodyPartType BodyPartType, int Pain) : IEvent;
 
 
-public class SkeletalSystem(BodySystemType bodySystemType) : BodySystemBase(bodySystemType)
+
+public class SkeletalSystem : BodySystemBase
 {
+    public SkeletalSystem(BodyResourcePool pool) : base(BodySystemType.Skeletal, pool)
+    {
+        InitSystem();
+    }
+
     public override void HandleMessage(IEvent evt)
+    {
+        throw new NotImplementedException();
+    }
+
+    public override void InitSystem()
     {
         throw new NotImplementedException();
     }
 }
 
 
-public class CirculatorySystem(BodySystemType bodySystemType) : BodySystemBase(bodySystemType)
+public class CirculatorySystem(BodySystemType bodySystemType, BodyResourcePool pool) : BodySystemBase(bodySystemType, pool)
 {
     public override void HandleMessage(IEvent evt)
+    {
+        throw new NotImplementedException();
+    }
+
+    public override void InitSystem()
     {
         throw new NotImplementedException();
     }
