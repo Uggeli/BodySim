@@ -371,12 +371,53 @@ public enum BodyComponentType: byte
 }
 
 
-public class BodyComponentBase(float current = 100, float max = 100, float regenRate = 1f, BodyComponentType bodyComponentType = BodyComponentType.None) : IResourceComponent
+public class BodyComponentBase(float current = 100,
+                               float max = 100,
+                               float regenRate = 1f,
+                               BodyComponentType bodyComponentType = BodyComponentType.None) : IResourceComponent
 {
     public BodyComponentType ComponentType { get; set; } = bodyComponentType;
     public float Current { get; set; } = current;
     public float Max { get; set; } = max;
     public float RegenRate { get; set; } = regenRate;
+}
+
+public interface IPropagationEffect
+{
+    float InitalValue { get; }
+    float PropagationFalloff { get; }
+    bool StopsAtDisabled { get; }
+    BodyComponentType TargetComponent { get; }
+}
+
+public delegate void NodeEffectHandler(BodyPartType bodyPartType, float value);
+public record PropagationEffect(float InitalValue, float PropagationFalloff, bool StopsAtDisabled=true, BodyComponentType TargetComponent=BodyComponentType.Health) : IPropagationEffect;
+public static class BodyGraphExtensions
+{
+    public static void PropagateEffect(this Dictionary<BodyPartType, List<BodyPartType>> connections,
+                                       Dictionary<BodyPartType, BodyPartNodeBase> statuses,
+                                       BodyPartType startNode,
+                                       IPropagationEffect effect,
+                                       NodeEffectHandler handler,
+                                       HashSet<BodyPartType>? visited = null)
+        {
+            visited ??= [];
+            if (visited.Contains(startNode)) return;
+            visited.Add(startNode);
+
+            handler(startNode, effect.InitalValue);
+            if (effect.StopsAtDisabled && statuses[startNode].Status.HasFlag(SystemNodeStatus.Disabled)) return;
+            if (connections.TryGetValue(startNode, out List<BodyPartType>? children))
+            {
+                float propagatedValue = effect.InitalValue *(1 - effect.PropagationFalloff);
+                var newEffect = new PropagationEffect(propagatedValue, effect.PropagationFalloff, effect.StopsAtDisabled, effect.TargetComponent);
+                foreach (BodyPartType child in children)
+                {
+                    connections.PropagateEffect(statuses, child, newEffect, handler, visited);
+                }
+            }
+
+        }
 }
 
 
@@ -405,6 +446,8 @@ public abstract class BodyPartNodeBase(BodyPartType bodyPartType, List<BodyCompo
     {
         Components.RemoveAll(c => c.ComponentType == componentType);
     }
+
+
 }
 
 
@@ -416,12 +459,12 @@ public abstract class BodySystemBase(BodySystemType bodySystemType, BodyResource
     public ConcurrentBag<IEvent> EventQueue {get; set;} = [];
     protected EventHub EventHub {get;} = eventHub;
     protected Dictionary<BodyPartType, List<BodyPartType>> Connections = []; // Root, Chain
-    protected Dictionary<BodyPartType, IBodySystemNode> Statuses = [];
+    protected Dictionary<BodyPartType, BodyPartNodeBase> Statuses = [];
     public abstract void HandleMessage(IEvent evt);
     public abstract void InitSystem(); // Initialize the system
     public SystemNodeStatus? GetNodeStatus(BodyPartType bodyPartType)
     {
-        if (Statuses.TryGetValue(bodyPartType, out IBodySystemNode? value))
+        if (Statuses.TryGetValue(bodyPartType, out BodyPartNodeBase? value))
         {
             return value.Status;
         }
@@ -429,15 +472,17 @@ public abstract class BodySystemBase(BodySystemType bodySystemType, BodyResource
     }
     public void SetNodeStatus(BodyPartType bodyPartType, SystemNodeStatus status)
     {
-        if (Statuses.TryGetValue(bodyPartType, out IBodySystemNode? value))
+        if (Statuses.TryGetValue(bodyPartType, out BodyPartNodeBase? value))
         {
             value.Status = status;
         }
     }
     public virtual void MetabolicUpdate()
     {
-        foreach ((BodyPartType bodyPartType, IBodySystemNode node) in Statuses)
+        foreach ((BodyPartType bodyPartType, BodyPartNodeBase node) in Statuses)
         {
+            if (node.Status.HasFlag(SystemNodeStatus.Disabled)) continue; // Skip disabled nodes
+            // Resource stuff
             if (node is IResourceNeedComponent resourceNeedComponent)
             {
                 BodyResourcePool.SetResources(resourceNeedComponent.SatisfyResourceNeeds(BodyResourcePool.GetResources()));
@@ -449,9 +494,20 @@ public abstract class BodySystemBase(BodySystemType bodySystemType, BodyResource
                     BodyResourcePool.AddResource(type, amount);
                 }
             }
-
-
+            if (node.Status.HasFlag(SystemNodeStatus.Healthy))
+            {
+                foreach (BodyComponentBase component in node.Components)
+                {
+                    node.GetComponent(component.ComponentType)?.Regenerate();
+                }
+            }
         }
+
+
+    }
+    protected void PropagateEffect(BodyPartType startNode, IPropagationEffect effect, NodeEffectHandler handler)
+    {
+        Connections.PropagateEffect(Statuses, startNode, effect, handler);
     }
 }
 
@@ -460,6 +516,26 @@ public abstract class BodySystemBase(BodySystemType bodySystemType, BodyResource
 public readonly record struct DamageEvent(BodyPartType BodyPartType, int Damage) : IEvent;
 public readonly record struct HealEvent(BodyPartType BodyPartType, int Heal) : IEvent;
 public readonly record struct PainEvent(BodyPartType BodyPartType, int Pain) : IEvent;
+public readonly record struct PropagateEffectEvent(BodyPartType BodyPartType, IPropagationEffect Effect) : IEvent;
+
+// Propagate Effects
+public record ImpactEffect(
+    float InitialValue,
+    float PropagationFalloff = 0.3f,
+    bool StopsAtDisabled = true
+) : PropagationEffect(InitialValue, PropagationFalloff, StopsAtDisabled);
+
+public record HeatEffect(
+    float InitialValue,
+    float PropagationFalloff = 0.2f,
+    bool StopsAtDisabled = false
+) : PropagationEffect(InitialValue, PropagationFalloff, StopsAtDisabled);
+
+public record NerveEffect(
+    float InitialValue,
+    float PropagationFalloff = 0.1f,
+    bool StopsAtDisabled = true
+) : PropagationEffect(InitialValue, PropagationFalloff, StopsAtDisabled);
 
 public class BoneNode: BodyPartNodeBase, IResourceNeedComponent
 {
@@ -471,20 +547,58 @@ public class BoneNode: BodyPartNodeBase, IResourceNeedComponent
         ResourceNeeds[BodyResourceType.Calcium] = 0; // Increase on damage
         ResourceNeeds[BodyResourceType.Glucose] = 0.1f; // minimal upkeep
         ResourceNeeds[BodyResourceType.Water] = 0.1f; // minimal upkeep
-
     }
 }
 
 public class SkeletalSystem : BodySystemBase
 {
-    public SkeletalSystem(BodyResourcePool pool) : base(BodySystemType.Skeletal, pool)
+    public SkeletalSystem(BodyResourcePool pool, EventHub eventHub) : base(BodySystemType.Skeletal, pool, eventHub)
     {
         InitSystem();
     }
 
     public override void HandleMessage(IEvent evt)
     {
-        throw new NotImplementedException();
+        switch(evt)
+        {
+            case DamageEvent damageEvent:
+                HandleDamage(damageEvent);
+                break;
+            case HealEvent healEvent:
+                HandleHeal(healEvent);
+                break;
+            case PropagateEffectEvent propagateEffectEvent:
+                HandlePropagateEffect(propagateEffectEvent);
+                break;
+            default:
+                break;
+        }
+    }
+
+    void HandleDamage(DamageEvent damageEvent)
+    {
+        if (Statuses.TryGetValue(damageEvent.BodyPartType, out BodyPartNodeBase? node))
+        {
+            if (node is BoneNode boneNode)
+            {
+                boneNode.GetComponent(BodyComponentType.Health)?.Decrease(damageEvent.Damage);
+            }
+        }
+    }
+
+    void HandleFracture(BodyPartType fracturePart)
+    {
+        SetNodeStatus(fracturePart, SystemNodeStatus.Disabled);
+    }
+
+    void HandleHeal(HealEvent healEvent)
+    {
+
+    }
+
+    void HandlePropagateEffect(PropagateEffectEvent propagateEffectEvent)
+    {
+        
     }
 
     public override void InitSystem()
@@ -522,12 +636,28 @@ public class SkeletalSystem : BodySystemBase
             Statuses[partType] = new BoneNode(partType);
         }
     }
+
+    public override void MetabolicUpdate()
+    {
+        base.MetabolicUpdate();
+        // Check for fractures
+        foreach ((BodyPartType bodyPartType, IBodySystemNode node) in Statuses)
+        {
+            if (node is BoneNode boneNode)
+            {
+                if (boneNode.GetComponent(BodyComponentType.Health)?.Current <= 0)
+                {
+                    HandleFracture(bodyPartType);
+                }
+            }
+        }
+    }
 }
 
 
 public class CirculatorySystem : BodySystemBase
 {
-    public CirculatorySystem(BodyResourcePool pool) : base(BodySystemType.Circulatory, pool)
+    public CirculatorySystem(BodyResourcePool pool, EventHub eventHub) : base(BodySystemType.Circulatory, pool, eventHub)
     {
         InitSystem();
     }
