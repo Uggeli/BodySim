@@ -16,10 +16,20 @@ public class Body
 {
     private EventHub EventHub {get; set;} = new EventHub();
     private BodyResourcePool ResourcePool {get; set;} = new BodyResourcePool();
+    private Dictionary<BodySystemType, BodySystemBase> Systems = [];
+    public Body()
+    {
+        Systems[BodySystemType.Skeletal] = new SkeletalSystem(ResourcePool, EventHub);
+        Systems[BodySystemType.Circulatory] = new CirculatorySystem(ResourcePool, EventHub);
+    }
 
-
-
-
+    public void Update()
+    {
+        foreach (var system in Systems.Values)
+        {
+            system.Update();
+        }
+    }
 }
 
 public class BodyResourcePool
@@ -387,11 +397,12 @@ public interface IPropagationEffect
     float InitalValue { get; }
     float PropagationFalloff { get; }
     bool StopsAtDisabled { get; }
+    bool Decrease { get; } // Increase or decrease
     BodyComponentType TargetComponent { get; }
 }
 
 public delegate void NodeEffectHandler(BodyPartType bodyPartType, float value);
-public record PropagationEffect(float InitalValue, float PropagationFalloff, bool StopsAtDisabled=true, BodyComponentType TargetComponent=BodyComponentType.Health) : IPropagationEffect;
+public record PropagationEffect(float InitalValue, float PropagationFalloff, bool StopsAtDisabled=true, BodyComponentType TargetComponent=BodyComponentType.Health, bool Decrease=true) : IPropagationEffect;
 public static class BodyGraphExtensions
 {
     public static void PropagateEffect(this Dictionary<BodyPartType, List<BodyPartType>> connections,
@@ -446,11 +457,7 @@ public abstract class BodyPartNodeBase(BodyPartType bodyPartType, List<BodyCompo
     {
         Components.RemoveAll(c => c.ComponentType == componentType);
     }
-
-
 }
-
-
 
 public abstract class BodySystemBase(BodySystemType bodySystemType, BodyResourcePool bodyResourcePool, EventHub eventHub) : IListener
 {
@@ -502,9 +509,18 @@ public abstract class BodySystemBase(BodySystemType bodySystemType, BodyResource
                 }
             }
         }
-
-
     }
+
+    public virtual void Update()
+    {
+        foreach (var evt in EventQueue)
+        {
+            HandleMessage(evt);
+        }
+        EventQueue.Clear();
+        MetabolicUpdate();
+    }
+
     protected void PropagateEffect(BodyPartType startNode, IPropagationEffect effect, NodeEffectHandler handler)
     {
         Connections.PropagateEffect(Statuses, startNode, effect, handler);
@@ -579,26 +595,39 @@ public class SkeletalSystem : BodySystemBase
     {
         if (Statuses.TryGetValue(damageEvent.BodyPartType, out BodyPartNodeBase? node))
         {
-            if (node is BoneNode boneNode)
-            {
-                boneNode.GetComponent(BodyComponentType.Health)?.Decrease(damageEvent.Damage);
-            }
+            node.GetComponent(BodyComponentType.Health)?.Decrease(damageEvent.Damage);
         }
     }
 
+    void HandleHeal(HealEvent healEvent)
+    {
+        if (Statuses.TryGetValue(healEvent.BodyPartType, out BodyPartNodeBase? node))
+        {
+            node.GetComponent(BodyComponentType.Health)?.Increase(healEvent.Heal);
+        }
+    }
     void HandleFracture(BodyPartType fracturePart)
     {
         SetNodeStatus(fracturePart, SystemNodeStatus.Disabled);
     }
 
-    void HandleHeal(HealEvent healEvent)
-    {
-
-    }
 
     void HandlePropagateEffect(PropagateEffectEvent propagateEffectEvent)
     {
-        
+        PropagateEffect(propagateEffectEvent.BodyPartType, propagateEffectEvent.Effect, (bodyPartType, value) =>
+        {
+            if (Statuses.TryGetValue(bodyPartType, out BodyPartNodeBase? node))
+            {
+                if (propagateEffectEvent.Effect.Decrease)
+                {
+                    node.GetComponent(propagateEffectEvent.Effect.TargetComponent)?.Decrease(value);
+                }
+                else
+                {
+                    node.GetComponent(propagateEffectEvent.Effect.TargetComponent)?.Increase(value);
+                }
+            }
+        });   
     }
 
     public override void InitSystem()
