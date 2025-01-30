@@ -28,6 +28,16 @@ public abstract class BodySystemBase(BodySystemType bodySystemType, BodyResource
             value.Status = status;
         }
     }
+
+    public BodyPartNodeBase? GetNode(BodyPartType bodyPartType)
+    {
+        if (Statuses.TryGetValue(bodyPartType, out BodyPartNodeBase? value))
+        {
+            return value;
+        }
+        return null;
+    }
+    
     public virtual void MetabolicUpdate()
     {
         foreach ((BodyPartType bodyPartType, BodyPartNodeBase node) in Statuses)

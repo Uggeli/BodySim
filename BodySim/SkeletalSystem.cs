@@ -5,6 +5,9 @@ public class SkeletalSystem : BodySystemBase
     public SkeletalSystem(BodyResourcePool pool, EventHub eventHub) : base(BodySystemType.Skeletal, pool, eventHub)
     {
         InitSystem();
+        eventHub.RegisterListener<DamageEvent>(this);
+        eventHub.RegisterListener<HealEvent>(this);
+        eventHub.RegisterListener<PropagateEffectEvent>(this);
     }
 
     public override void HandleMessage(IEvent evt)
