@@ -18,4 +18,19 @@ public class Body
             system.Update();
         }
     }
+
+    public void TakeDamage(BodyPartType bodyPart, int damage)
+    {
+        EventHub.Emit(new DamageEvent(bodyPart, damage));
+    }
+
+    public void Heal(BodyPartType bodyPart, int heal)
+    {
+        EventHub.Emit(new HealEvent(bodyPart, heal));
+    }
+
+    public void ApplyEffect(BodyPartType bodyPart, IPropagationEffect effect)
+    {
+        EventHub.Emit(new PropagateEffectEvent(bodyPart, effect));
+    }
 }
