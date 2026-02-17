@@ -88,13 +88,16 @@ public class ImmuneNode : BodyPartNodeBase, IResourceNeedComponent
     /// infection cleared this tick. Effectiveness depends on immune potency
     /// and whether the node has a lymph node.
     /// </summary>
-    public float FightInfection()
+    public float FightInfection(float bloodFlowFactor = 1f)
     {
         if (!IsInfected) return 0;
 
         float potency = GetComponent(BodyComponentType.ImmunePotency)?.Current ?? 0;
         float fightPower = potency * 0.03f; // 3% of potency per tick
         if (HasLymphNode) fightPower *= 1.5f;
+
+        // Blood flow modulates immune cell delivery
+        fightPower *= bloodFlowFactor;
 
         // Overwhelmed nodes fight less effectively
         if (IsOverwhelmed) fightPower *= 0.3f;
@@ -119,13 +122,16 @@ public class ImmuneNode : BodyPartNodeBase, IResourceNeedComponent
     /// Neutralises toxins — called each metabolic tick. Returns the amount
     /// of toxin cleared. Slower than infection fighting.
     /// </summary>
-    public float NeutraliseToxins()
+    public float NeutraliseToxins(float bloodFlowFactor = 1f)
     {
         if (!IsPoisoned) return 0;
 
         float potency = GetComponent(BodyComponentType.ImmunePotency)?.Current ?? 0;
         float neutralisePower = potency * 0.02f; // 2% of potency per tick
         if (HasLymphNode) neutralisePower *= 1.3f;
+
+        // Blood flow modulates detoxification delivery
+        neutralisePower *= bloodFlowFactor;
 
         // Overwhelmed nodes neutralise less effectively
         if (IsOverwhelmed) neutralisePower *= 0.3f;

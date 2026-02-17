@@ -234,6 +234,36 @@ public class IntegumentarySystem : BodySystemBase, IListener
             if (skin.IsExposed)
             {
                 skin.GetComponent(BodyComponentType.SkinIntegrity)?.Decrease(0.1f);
+
+                // Cross-system: exposed wounds are infection vectors
+                // Emit infection event for the immune system to handle
+                var immuneSys = GetSiblingSystem<ImmuneSystem>(BodySystemType.Immune);
+                if (immuneSys != null)
+                {
+                    float currentInfection = immuneSys.GetInfectionLevel(bodyPartType);
+                    if (currentInfection < 50f) // Keep seeding until significant infection establishes
+                    {
+                        // Larger wounds (lower integrity) introduce more bacteria
+                        float integrityPct = (skin.GetComponent(BodyComponentType.SkinIntegrity)?.Current ?? 0) / 100f;
+                        float woundSeverity = (1f - integrityPct) * 20f; // Up to 20 per tick for fully destroyed skin
+                        woundSeverity = Math.Max(woundSeverity, 5f); // Minimum 5 per tick
+                        EventHub.Emit(new InfectionEvent(bodyPartType, woundSeverity, 1f));
+                    }
+                }
+            }
+
+            // Cross-system: open wounds bleed (skin breach exposes blood vessels)
+            if (skin.IsWounded && !skin.IsBandaged)
+            {
+                var circ = GetSiblingSystem<CirculatorySystem>(BodySystemType.Circulatory);
+                if (circ != null)
+                {
+                    var vesselNode = circ.GetNode(bodyPartType) as BloodVesselNode;
+                    if (vesselNode != null && !vesselNode.IsBleeding)
+                    {
+                        EventHub.Emit(new BleedEvent(bodyPartType, 0.3f)); // Minor wound bleed
+                    }
+                }
             }
 
             // Burns cause ongoing damage if severe

@@ -1,6 +1,6 @@
 namespace BodySim;
 
-public class NervousSystem : BodySystemBase
+public class NervousSystem : BodySystemBase, IListener
 {
     /// <summary>Damage threshold above which a hit can sever a nerve.</summary>
     public float SeverDamageThreshold { get; set; } = 60f;
@@ -45,6 +45,22 @@ public class NervousSystem : BodySystemBase
         eventHub.RegisterListener<NerveRepairEvent>(this);
         eventHub.RegisterListener<ShockEvent>(this);
         eventHub.RegisterListener<PropagateEffectEvent>(this);
+    }
+
+    // ── Priority message handling ──────────────────────────────────
+    // Shock events must be processed immediately so that downstream
+    // systems (Circulatory) can see the shock state during the same tick.
+
+    void IListener.OnMessage(IEvent evt)
+    {
+        if (evt is ShockEvent)
+        {
+            HandleMessage(evt);
+        }
+        else
+        {
+            EventQueue.Add(evt);
+        }
     }
 
     // ── Event handling ─────────────────────────────────────────────
@@ -162,10 +178,11 @@ public class NervousSystem : BodySystemBase
         IsInShock = true;
         ShockLevel = Math.Clamp(ShockLevel + evt.Intensity, 0, 100);
 
-        // Shock reduces signal strength everywhere
+        // Shock reduces signal strength everywhere and generates pain
         foreach (var node in Statuses.Values.OfType<NerveNode>())
         {
             node.GetComponent(BodyComponentType.NerveSignal)?.Decrease(evt.Intensity * 0.3f);
+            node.ReceivePain(evt.Intensity * 0.3f); // Shock causes systemic pain
         }
     }
 

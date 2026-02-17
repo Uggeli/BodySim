@@ -233,12 +233,36 @@ public class MetabolicSystem : BodySystemBase
             }
         }
 
-        // 4. Temperature regulation
+        // 4. Temperature regulation — inflammation causes fever
+        var immune = GetSiblingSystem<ImmuneSystem>(BodySystemType.Immune);
         foreach (var (part, node) in Statuses)
         {
             if (node.Status.HasFlag(SystemNodeStatus.Disabled)) continue;
             if (node is MetabolicNode metaNode)
             {
+                // Cross-system: inflammation raises local temperature (fever response)
+                if (immune != null)
+                {
+                    var immuneNode = immune.GetNode(part) as ImmuneNode;
+                    if (immuneNode != null && immuneNode.IsInflamed)
+                    {
+                        metaNode.Temperature += immuneNode.InflammationLevel * 0.1f;
+                    }
+                }
+
+                // Cross-system: low blood flow reduces metabolic efficiency (ischemia)
+                var circulatory = GetSiblingSystem<CirculatorySystem>(BodySystemType.Circulatory);
+                if (circulatory != null)
+                {
+                    float flow = circulatory.GetBloodFlowTo(part);
+                    float flowPct = flow / 100f;
+                    if (flowPct < 0.3f)
+                    {
+                        // Ischemia — reduced blood flow degrades metabolic rate
+                        metaNode.GetComponent(BodyComponentType.MetabolicRate)?.Decrease((0.3f - flowPct) * 1f);
+                    }
+                }
+
                 metaNode.RegulateTemperature();
                 metaNode.ApplyTemperatureDamage();
             }

@@ -23,6 +23,12 @@ public class Body
         Systems[BodySystemType.Immune] = new ImmuneSystem(ResourcePool, EventHub);
         Systems[BodySystemType.Nerveus] = new NervousSystem(ResourcePool, EventHub);
         Systems[BodySystemType.Metabolic] = new MetabolicSystem(ResourcePool, EventHub);
+
+        // Wire up system registry so systems can query each other
+        foreach (var system in Systems.Values)
+        {
+            system.SystemRegistry = Systems;
+        }
     }
 
     public void Update()

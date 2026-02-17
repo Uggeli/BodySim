@@ -178,7 +178,16 @@ public class CirculatorySystem : BodySystemBase
         float bloodVolume = BodyResourcePool.GetResource(BodyResourceType.Blood);
         float volumeRatio = Math.Min(bloodVolume / ExpectedBloodVolume, 1.5f);
 
-        BloodPressure = heartHealth * volumeRatio * 100f;
+        // Cross-system: nervous shock depresses cardiac output (neurogenic shock)
+        float shockFactor = 1f;
+        var nervous = GetSiblingSystem<NervousSystem>(BodySystemType.Nerveus);
+        if (nervous != null && nervous.IsInShock)
+        {
+            shockFactor = 1f - (nervous.ShockLevel / 200f); // Up to 50% BP reduction at max shock
+            shockFactor = Math.Clamp(shockFactor, 0.5f, 1f);
+        }
+
+        BloodPressure = heartHealth * volumeRatio * shockFactor * 100f;
     }
 
     void ProcessBleeding()
@@ -187,7 +196,13 @@ public class CirculatorySystem : BodySystemBase
         {
             if (node is not BloodVesselNode bvn || !bvn.IsBleeding) continue;
 
-            BodyResourcePool.RemoveResource(BodyResourceType.Blood, bvn.BleedRate);
+            // Scale bleed drain by blood flow — a vessel with no flow can't leak blood
+            var flowComp = bvn.GetComponent(BodyComponentType.BloodFlow);
+            float flowFactor = flowComp != null ? Math.Clamp(flowComp.Current / 100f, 0f, 1f) : 1f;
+            float effectiveBleed = bvn.BleedRate * flowFactor;
+
+            if (effectiveBleed > 0)
+                BodyResourcePool.RemoveResource(BodyResourceType.Blood, effectiveBleed);
 
             // Minor bleeds self-clot
             if (bvn.BleedRate <= SelfClotThreshold)

@@ -11,6 +11,15 @@ public abstract class BodySystemBase(BodySystemType bodySystemType, BodyResource
     protected EventHub EventHub {get;} = eventHub;
     protected Dictionary<BodyPartType, List<BodyPartType>> Connections = []; // Root, Chain
     protected Dictionary<BodyPartType, BodyPartNodeBase> Statuses = [];
+
+    /// <summary>Registry of sibling systems, set by Body after construction. Enables cross-system queries.</summary>
+    public Dictionary<BodySystemType, BodySystemBase> SystemRegistry { get; set; } = [];
+
+    /// <summary>Convenience helper to look up a sibling system by type.</summary>
+    protected T? GetSiblingSystem<T>(BodySystemType type) where T : BodySystemBase
+    {
+        return SystemRegistry.TryGetValue(type, out var system) ? system as T : null;
+    }
     public abstract void HandleMessage(IEvent evt);
     public abstract void InitSystem(); // Initialize the system
     public SystemNodeStatus? GetNodeStatus(BodyPartType bodyPartType)

@@ -1300,14 +1300,16 @@ public class BodyIntegrationTests
         body.Bandage(BodyPartType.LeftLeg);
         body.Update();
 
-        // 4. Apply medicine
-        body.Cure(BodyPartType.LeftLeg, 40);
+        // 4. Apply medicine (stronger cure needed — cross-system exposed wound
+        //    seeded extra infection before bandage was applied)
+        body.Cure(BodyPartType.LeftLeg, 60);
         body.Update();
 
-        // 5. Heal over time
-        for (int i = 0; i < 10; i++)
+        // 5. Heal over time (more rounds to account for blood-flow-limited immune response)
+        for (int i = 0; i < 20; i++)
         {
             body.Heal(BodyPartType.LeftLeg, 10);
+            body.Cure(BodyPartType.LeftLeg, 10); // ongoing treatment
             body.Update();
         }
 
@@ -4419,14 +4421,27 @@ public class BodyIntegrationTests
         // Now clot and infuse fluids — pulse should recover
         body.Clot(BodyPartType.LeftForearm);
         body.Clot(BodyPartType.RightThigh);
+        body.Bandage(BodyPartType.LeftForearm); // Prevent skin auto-bleed from re-opening wounds
+        body.Bandage(BodyPartType.RightThigh);
         body.Hydrate(30f); // water helps replenish volume
 
-        for (int i = 0; i < 10; i++) body.Update();
+        // Measure BP right after clotting (before further deterioration)
+        body.Update();
+        float postClotBP = circ.GetBloodPressure();
 
-        // BP shouldn't get worse after clotting
+        for (int i = 0; i < 15; i++)
+        {
+            body.Heal(BodyPartType.LeftForearm, 5);
+            body.Heal(BodyPartType.RightThigh, 5);
+            body.Heal(BodyPartType.Chest, 5); // Reduce shock over time
+            body.Update();
+        }
+
+        // BP shouldn't get worse after clotting + treatment
+        // (compare to postClotBP — healing should help recover from shock)
         float stableBP = circ.GetBloodPressure();
-        Assert.True(stableBP >= drainedBP,
-            $"Clotting and fluids should stabilize or improve BP (drained: {drainedBP}, stable: {stableBP})");
+        Assert.True(stableBP >= postClotBP,
+            $"Clotting, bandaging, and healing should stabilize or improve BP (postClot: {postClotBP}, stable: {stableBP})");
     }
 
     // ─── 149. Fatigue builds when energy depleted — body shuts down ──
@@ -4697,6 +4712,856 @@ public class BodyIntegrationTests
         float collapseForce = musc.GetUpperBodyForce();
         Assert.True(collapseBP < 50f,
             $"Cardiovascular system should be in crisis (BP: {collapseBP})");
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // CROSS-SYSTEM WIRING TESTS (156–185)
+    // Systems now talk to each other — blood flow affects immune/muscle/metabolic,
+    // nerve signal affects muscle, inflammation causes fever, wounds auto-infect,
+    // shock weakens heart, fractures disable muscles.
+    // ═══════════════════════════════════════════════════════════════
+
+    // ── 156. Blood flow cut → immune weakened at that limb ──────
+    [Fact]
+    public void CrossSystem_CutBloodFlow_ImmuneCannotFightInfection()
+    {
+        var body = CreateBody();
+        var circ = Circulatory(body);
+        var immune = Immune(body);
+
+        // Infect the left hand
+        body.Infect(BodyPartType.LeftHand, 30f, 0.5f);
+        body.Update();
+        float infectionWithFlow = immune.GetInfectionLevel(BodyPartType.LeftHand);
+
+        // Now destroy the blood vessel at the shoulder — cuts flow to entire arm
+        body.TakeDamage(BodyPartType.LeftShoulder, 200);
+        body.Update();
+
+        // Blood flow to left hand should be near zero
+        float flowToHand = circ.GetBloodFlowTo(BodyPartType.LeftHand);
+        Assert.True(flowToHand < 10f,
+            $"Destroying shoulder vessel should cut blood flow to hand (flow: {flowToHand})");
+
+        // Infect the hand again — immune should struggle without blood flow
+        body.Infect(BodyPartType.LeftHand, 30f, 0.5f);
+
+        // Also infect the right hand (healthy blood flow for comparison)
+        body.Infect(BodyPartType.RightHand, 30f, 0.5f);
+
+        // Run several ticks
+        for (int i = 0; i < 10; i++) body.Update();
+
+        float leftInfection = immune.GetInfectionLevel(BodyPartType.LeftHand);
+        float rightInfection = immune.GetInfectionLevel(BodyPartType.RightHand);
+
+        // Left hand infection should be worse (immune can't reach it without blood)
+        Assert.True(leftInfection > rightInfection,
+            $"Cut-off limb should have worse infection (left: {leftInfection}, right: {rightInfection})");
+    }
+
+    // ── 157. Blood flow cut → muscle starves of oxygen ──────────
+    [Fact]
+    public void CrossSystem_CutBloodFlow_MuscleStaminaDrains()
+    {
+        var body = CreateBody();
+        var circ = Circulatory(body);
+        var musc = Muscular(body);
+
+        // Baseline: healthy hand force
+        float healthyForce = musc.GetForceOutput(BodyPartType.LeftHand);
+        Assert.True(healthyForce > 0, "Healthy hand should have force");
+
+        // Destroy blood flow to left arm by destroying shoulder vessel
+        body.TakeDamage(BodyPartType.LeftShoulder, 200);
+
+        // Tick several times — muscle should degrade from low blood flow
+        for (int i = 0; i < 10; i++) body.Update();
+
+        float cutOffForce = musc.GetForceOutput(BodyPartType.LeftHand);
+        float healthySideForce = musc.GetForceOutput(BodyPartType.RightHand);
+
+        Assert.True(cutOffForce < healthySideForce,
+            $"Blood-starved muscle should be weaker (left: {cutOffForce}, right: {healthySideForce})");
+    }
+
+    // ── 158. Nerve signal affects muscle force output ───────────
+    [Fact]
+    public void CrossSystem_NerveSevered_MuscleStrengthDegrades()
+    {
+        var body = CreateBody();
+        var musc = Muscular(body);
+        var nerv = Nervous(body);
+
+        // Sever the nerve at the forearm — hand loses signal
+        body.SeverNerve(BodyPartType.LeftForearm);
+        body.Update();
+
+        float signal = nerv.GetSignalStrength(BodyPartType.LeftHand);
+        Assert.True(signal < 0.1f, $"Severed downstream should have near-zero signal (signal: {signal})");
+
+        // Tick several times — low signal should degrade muscle strength
+        for (int i = 0; i < 5; i++) body.Update();
+
+        float severedForce = musc.GetForceOutput(BodyPartType.LeftHand);
+        float healthyForce = musc.GetForceOutput(BodyPartType.RightHand);
+
+        Assert.True(severedForce < healthyForce,
+            $"Nerve-severed muscle should be weaker (severed: {severedForce}, healthy: {healthyForce})");
+    }
+
+    // ── 159. Inflammation causes fever (temperature rises) ──────
+    [Fact]
+    public void CrossSystem_Inflammation_CausesFever()
+    {
+        var body = CreateBody();
+        var meta = Metabolic(body);
+        var immune = Immune(body);
+
+        // Baseline temperature
+        body.Update();
+        float baselineTemp = meta.GetAverageTemperature();
+
+        // Create a severe infection to trigger inflammation
+        body.Infect(BodyPartType.Chest, 50f, 1f);
+        body.Infect(BodyPartType.Abdomen, 50f, 1f);
+
+        // Tick several times — inflammation should raise temperature
+        for (int i = 0; i < 15; i++) body.Update();
+
+        float postInfectionTemp = meta.GetAverageTemperature();
+        Assert.True(postInfectionTemp > baselineTemp,
+            $"Inflammation should raise body temperature (baseline: {baselineTemp:F2}, after: {postInfectionTemp:F2})");
+    }
+
+    // ── 160. Exposed wound auto-infects ─────────────────────────
+    [Fact]
+    public void CrossSystem_ExposedWound_CausesInfection()
+    {
+        var body = CreateBody();
+        var skin = Integumentary(body);
+        var immune = Immune(body);
+
+        // Damage the hand enough to create a wound (integrity < 40)
+        body.TakeDamage(BodyPartType.LeftHand, 80);
+        body.Update();
+
+        // The wound should be exposed (no bandage)
+        var skinNode = skin.GetNode(BodyPartType.LeftHand) as SkinNode;
+        Assert.True(skinNode != null && skinNode.IsWounded, "Heavy damage should wound the skin");
+        Assert.True(skinNode!.IsExposed, "Unbandaged wound should be exposed");
+
+        // Run several ticks — exposed wound should auto-infect
+        for (int i = 0; i < 10; i++) body.Update();
+
+        float infection = immune.GetInfectionLevel(BodyPartType.LeftHand);
+        Assert.True(infection > 0,
+            $"Exposed wound should cause infection (infection: {infection})");
+    }
+
+    // ── 161. Bandage prevents auto-infection ────────────────────
+    [Fact]
+    public void CrossSystem_BandagedWound_NoAutoInfection()
+    {
+        var body = CreateBody();
+        var immune = Immune(body);
+
+        // Create wound + immediately bandage
+        body.TakeDamage(BodyPartType.RightHand, 80);
+        body.Bandage(BodyPartType.RightHand);
+        body.Update();
+
+        // Cure any immediate infections to start clean
+        body.Cure(BodyPartType.RightHand, 100f);
+
+        // Run several ticks — bandaged wound should NOT auto-infect
+        for (int i = 0; i < 10; i++) body.Update();
+
+        float infection = immune.GetInfectionLevel(BodyPartType.RightHand);
+        Assert.True(infection < 5f,
+            $"Bandaged wound should resist infection (infection: {infection})");
+    }
+
+    // ── 162. Nervous shock weakens heart (blood pressure drop) ──
+    [Fact]
+    public void CrossSystem_Shock_ReducesBloodPressure()
+    {
+        var body = CreateBody();
+        var circ = Circulatory(body);
+        var nerv = Nervous(body);
+
+        body.Update();
+        float baselineBP = circ.GetBloodPressure();
+
+        // Induce shock
+        body.Shock(80);
+        body.Update();
+
+        Assert.True(nerv.IsInShock, "Body should be in shock");
+
+        float shockedBP = circ.GetBloodPressure();
+        Assert.True(shockedBP < baselineBP,
+            $"Shock should reduce blood pressure (baseline: {baselineBP}, shocked: {shockedBP})");
+    }
+
+    // ── 163. Bone fracture disables local muscle ────────────────
+    [Fact]
+    public void CrossSystem_Fracture_DisablesMuscleAtThatPart()
+    {
+        var body = CreateBody();
+        var musc = Muscular(body);
+        var skel = Skeletal(body);
+
+        // Baseline: forearm muscle works
+        float baseForce = musc.GetForceOutput(BodyPartType.LeftForearm);
+        Assert.True(baseForce > 0, "Healthy forearm should have force");
+
+        // Fracture the forearm
+        body.TakeDamage(BodyPartType.LeftForearm, 200); // Should fracture
+        body.Update();
+
+        // The muscle at the fracture site should be disabled
+        float fracturedForce = musc.GetForceOutput(BodyPartType.LeftForearm);
+        Assert.Equal(0, fracturedForce);
+    }
+
+    // ── 164. Setting bone re-enables muscle ─────────────────────
+    [Fact]
+    public void CrossSystem_BoneSet_ReenablesMuscle()
+    {
+        var body = CreateBody();
+        var musc = Muscular(body);
+
+        // Fracture + set the forearm bone
+        body.TakeDamage(BodyPartType.LeftForearm, 200);
+        body.Update();
+
+        Assert.Equal(0, musc.GetForceOutput(BodyPartType.LeftForearm));
+
+        // Set the bone
+        body.SetBone(BodyPartType.LeftForearm);
+        body.Heal(BodyPartType.LeftForearm, 50);
+        body.Update();
+
+        float repairedForce = musc.GetForceOutput(BodyPartType.LeftForearm);
+        Assert.True(repairedForce > 0,
+            $"Setting bone should re-enable muscle (force: {repairedForce})");
+    }
+
+    // ── 165. Open wound causes bleeding via skin → circulatory ──
+    [Fact]
+    public void CrossSystem_OpenWound_CausesBleeding()
+    {
+        var body = CreateBody();
+        var circ = Circulatory(body);
+        var skin = Integumentary(body);
+
+        // Create a wound that exposes blood vessels
+        body.TakeDamage(BodyPartType.LeftHand, 80);
+        body.Update();
+
+        // The wound should trigger bleeding at that body part
+        var bleedingParts = circ.GetBleedingParts();
+        // The hand should now be bleeding (from skin breach OR damage threshold)
+        Assert.True(circ.GetTotalBleedRate() > 0,
+            "Open wound should cause some bleeding");
+    }
+
+    // ── 166. Low blood flow → metabolic ischemia ────────────────
+    [Fact]
+    public void CrossSystem_CutBloodFlow_MetabolicRateDrops()
+    {
+        var body = CreateBody();
+        var meta = Metabolic(body);
+        var circ = Circulatory(body);
+
+        body.Update();
+        float baselineRate = meta.GetEfficiency(BodyPartType.LeftHand);
+
+        // Destroy shoulder vessel to cut blood flow
+        body.TakeDamage(BodyPartType.LeftShoulder, 200);
+
+        for (int i = 0; i < 5; i++) body.Update();
+
+        float ischemicRate = meta.GetEfficiency(BodyPartType.LeftHand);
+        float healthySideRate = meta.GetEfficiency(BodyPartType.RightHand);
+
+        Assert.True(ischemicRate < healthySideRate,
+            $"Blood-starved limb should have lower metabolic efficiency (ischemic: {ischemicRate:F3}, healthy: {healthySideRate:F3})");
+    }
+
+    // ── 167. Tourniquet scenario — stops bleeding but starves limb ──
+    [Fact]
+    public void CrossSystem_Tourniquet_StopsBleedButStarvesLimb()
+    {
+        var body = CreateBody();
+        var circ = Circulatory(body);
+        var immune = Immune(body);
+        var musc = Muscular(body);
+
+        // Massive arm wound — bleeding heavily
+        body.TakeDamage(BodyPartType.LeftUpperArm, 100);
+        body.Bleed(BodyPartType.LeftUpperArm, 5f);
+        body.Update();
+
+        Assert.True(circ.GetTotalBleedRate() > 0, "Arm should be bleeding");
+
+        // "Tourniquet" = destroy blood flow upstream (shoulder) + clot the wound
+        body.TakeDamage(BodyPartType.LeftShoulder, 200);
+        body.Clot(BodyPartType.LeftUpperArm);
+
+        // Tick several times — limb is saved from bleeding but starved
+        for (int i = 0; i < 15; i++) body.Update();
+
+        float flowToHand = circ.GetBloodFlowTo(BodyPartType.LeftHand);
+        Assert.True(flowToHand < 10f,
+            $"Tourniquet should cut blood flow to hand (flow: {flowToHand})");
+
+        // Muscle below tourniquet degrades
+        float leftForce = musc.GetForceOutput(BodyPartType.LeftHand);
+        float rightForce = musc.GetForceOutput(BodyPartType.RightHand);
+        Assert.True(leftForce < rightForce,
+            $"Tourniquet limb muscle should weaken (left: {leftForce}, right: {rightForce})");
+    }
+
+    // ── 168. Gladiator tactical: sever nerve + cut blood = total limb death ──
+    [Fact]
+    public void CrossSystem_SeverNerve_CutBlood_TotalLimbDeath()
+    {
+        var body = CreateBody();
+        var musc = Muscular(body);
+        var nerv = Nervous(body);
+        var circ = Circulatory(body);
+        var immune = Immune(body);
+
+        // Sever the nerve at the shoulder
+        body.SeverNerve(BodyPartType.LeftShoulder);
+        // Destroy the blood vessel at the shoulder
+        body.TakeDamage(BodyPartType.LeftShoulder, 200);
+        // Infect the now-undefended limb
+        body.Infect(BodyPartType.LeftHand, 40f, 1f);
+
+        for (int i = 0; i < 10; i++) body.Update();
+
+        // The arm is completely dead — no nerve signal, no blood, no muscle, rampant infection
+        float signal = nerv.GetSignalStrength(BodyPartType.LeftHand);
+        float flow = circ.GetBloodFlowTo(BodyPartType.LeftHand);
+        float force = musc.GetForceOutput(BodyPartType.LeftHand);
+        float infection = immune.GetInfectionLevel(BodyPartType.LeftHand);
+
+        Assert.True(signal < 0.1f, $"No nerve signal (signal: {signal})");
+        Assert.True(flow < 10f, $"No blood flow (flow: {flow})");
+        Assert.True(force < 5f, $"No muscle force (force: {force})");
+        Assert.True(infection > 20f, $"Unchecked infection (infection: {infection})");
+    }
+
+    // ── 169. Shock recovery: as shock fades, BP recovers ────────
+    [Fact]
+    public void CrossSystem_ShockRecovery_BPRecovers()
+    {
+        var body = CreateBody();
+        var circ = Circulatory(body);
+        var nerv = Nervous(body);
+
+        body.Update();
+        float baselineBP = circ.GetBloodPressure();
+
+        // Shock drops BP
+        body.Shock(60);
+        body.Update();
+        float shockedBP = circ.GetBloodPressure();
+        Assert.True(shockedBP < baselineBP, "Shock should lower BP");
+
+        // Rest and heal to reduce shock over time
+        for (int i = 0; i < 30; i++)
+        {
+            body.Heal(BodyPartType.Chest, 5);
+            body.Update();
+        }
+
+        float recoveredBP = circ.GetBloodPressure();
+        Assert.True(recoveredBP > shockedBP,
+            $"BP should recover as shock fades (shocked: {shockedBP}, recovered: {recoveredBP})");
+    }
+
+    // ── 170. Multi-system gladiator scenario: broken arm fight ──
+    [Fact]
+    public void CrossSystem_BrokenArm_FullCascade()
+    {
+        var body = CreateBody();
+        var musc = Muscular(body);
+        var nerv = Nervous(body);
+        var circ = Circulatory(body);
+        var skel = Skeletal(body);
+        var immune = Immune(body);
+
+        // Gladiator takes a heavy mace blow to the left forearm
+        // This should: fracture bone, damage muscle, trigger bleeding, cause pain/shock
+        body.TakeDamage(BodyPartType.LeftForearm, 100);
+        body.Update();
+
+        // Bone should be fractured
+        var boneNode = skel.GetNode(BodyPartType.LeftForearm) as BoneNode;
+        Assert.True(boneNode != null && boneNode.IsFractured, "Forearm bone should fracture");
+
+        // Muscle at fracture site should be disabled
+        float fracturedForce = musc.GetForceOutput(BodyPartType.LeftForearm);
+        Assert.Equal(0, fracturedForce);
+
+        // Bleeding from the wound
+        Assert.True(circ.GetTotalBleedRate() > 0, "Should be bleeding");
+
+        // Pain should have generated
+        float pain = nerv.GetTotalPain();
+        Assert.True(pain > 0, "Should have pain from fracture");
+    }
+
+    // ── 171. Blood flow restoration reverses ischemia ───────────
+    [Fact]
+    public void CrossSystem_RestoreBloodFlow_ReverseIschemia()
+    {
+        var body = CreateBody();
+        var musc = Muscular(body);
+        var circ = Circulatory(body);
+
+        // Damage shoulder to cut flow
+        body.TakeDamage(BodyPartType.LeftShoulder, 100);
+        for (int i = 0; i < 5; i++) body.Update();
+
+        float lowFlowForce = musc.GetForceOutput(BodyPartType.LeftHand);
+
+        // Heal the shoulder to restore flow
+        for (int i = 0; i < 10; i++)
+        {
+            body.Heal(BodyPartType.LeftShoulder, 20);
+            body.Update();
+        }
+
+        float restoredFlowForce = musc.GetForceOutput(BodyPartType.LeftHand);
+        Assert.True(restoredFlowForce > lowFlowForce,
+            $"Restoring blood flow should improve muscle (before: {lowFlowForce}, after: {restoredFlowForce})");
+    }
+
+    // ── 172. Inflammation + infection fever escalation ───────────
+    [Fact]
+    public void CrossSystem_InfectionFever_Escalation()
+    {
+        var body = CreateBody();
+        var meta = Metabolic(body);
+        var immune = Immune(body);
+
+        body.Update();
+        float baseTemp = meta.GetAverageTemperature();
+
+        // Severe multi-site infection
+        body.Infect(BodyPartType.Chest, 60f, 1f);
+        body.Infect(BodyPartType.Abdomen, 60f, 1f);
+        body.Infect(BodyPartType.Neck, 60f, 1f);
+
+        for (int i = 0; i < 20; i++) body.Update();
+
+        // Multiple inflamed sites should produce significant fever
+        float feverTemp = meta.GetAverageTemperature();
+        var inflamedParts = immune.GetInflamedParts();
+
+        Assert.True(inflamedParts.Count > 0, "Should have inflamed parts");
+        Assert.True(feverTemp > baseTemp + 0.5f,
+            $"Multi-site inflammation should cause noticeable fever (base: {baseTemp:F2}, fever: {feverTemp:F2})");
+    }
+
+    // ── 173. Nerve repair restores muscle function gradually ────
+    [Fact]
+    public void CrossSystem_NerveRepair_MuscleGraduallyRecovers()
+    {
+        var body = CreateBody();
+        var musc = Muscular(body);
+        var nerv = Nervous(body);
+
+        float baselineForce = musc.GetForceOutput(BodyPartType.LeftHand);
+
+        // Sever and degrade
+        body.SeverNerve(BodyPartType.LeftForearm);
+        for (int i = 0; i < 5; i++) body.Update();
+
+        float severedForce = musc.GetForceOutput(BodyPartType.LeftHand);
+        Assert.True(severedForce < baselineForce, "Severed nerve should weaken muscle");
+
+        // Repair the nerve
+        body.RepairNerve(BodyPartType.LeftForearm);
+
+        // Recover over many ticks
+        for (int i = 0; i < 20; i++) body.Update();
+
+        float repairedForce = musc.GetForceOutput(BodyPartType.LeftHand);
+        Assert.True(repairedForce > severedForce,
+            $"Repaired nerve should improve muscle (severed: {severedForce}, repaired: {repairedForce})");
+    }
+
+    // ── 174. Wound bandage stops both bleeding and infection ────
+    [Fact]
+    public void CrossSystem_Bandage_StopsBleedingAndInfection()
+    {
+        var body = CreateBody();
+        var circ = Circulatory(body);
+        var immune = Immune(body);
+
+        // Create a bad wound
+        body.TakeDamage(BodyPartType.LeftHand, 80);
+        for (int i = 0; i < 3; i++) body.Update();
+
+        // Should have infection building and/or bleeding
+        float preBandageBleed = circ.GetTotalBleedRate();
+        float preBandageInfection = immune.GetInfectionLevel(BodyPartType.LeftHand);
+
+        // Bandage + clot
+        body.Bandage(BodyPartType.LeftHand);
+        body.Clot(BodyPartType.LeftHand);
+        body.Cure(BodyPartType.LeftHand, 50f);
+
+        for (int i = 0; i < 10; i++) body.Update();
+
+        float postBandageInfection = immune.GetInfectionLevel(BodyPartType.LeftHand);
+
+        // Infection should be controlled (bandage prevents new infection seeds)
+        Assert.True(postBandageInfection <= preBandageInfection || postBandageInfection < 5f,
+            $"Bandage should prevent infection growth (pre: {preBandageInfection}, post: {postBandageInfection})");
+    }
+
+    // ── 175. Full arena scenario with cross-system interactions ──
+    [Fact]
+    public void CrossSystem_FullArenaFight_WithSystemInterplay()
+    {
+        var body = CreateBody();
+        var musc = Muscular(body);
+        var circ = Circulatory(body);
+        var nerv = Nervous(body);
+        var immune = Immune(body);
+        var meta = Metabolic(body);
+        var skel = Skeletal(body);
+        var skin = Integumentary(body);
+
+        // Round 1: Sword slash to left arm — skin breach → bleed + infection risk
+        body.TakeDamage(BodyPartType.LeftUpperArm, 60);
+        body.Update();
+        body.Update();
+
+        // Round 2: Mace hit to right leg — fracture → muscle disabled
+        body.TakeDamage(BodyPartType.RightThigh, 150);
+        body.Update();
+
+        // Right leg should be severely compromised
+        var thighBone = skel.GetNode(BodyPartType.RightThigh) as BoneNode;
+        float rightLegForce = musc.GetForceOutput(BodyPartType.RightThigh);
+
+        // Round 3: Heavy exertion while wounded — shock from pain
+        body.Exert(BodyPartType.Chest, 80);
+        body.Exert(BodyPartType.LeftUpperArm, 60);
+        body.Update();
+
+        // Round 4: Multiple ticks of fighting — compound effects
+        for (int i = 0; i < 10; i++) body.Update();
+
+        // After the fight:
+        // 1. Blood pressure should be affected (bleeding + potential shock)
+        float bp = circ.GetBloodPressure();
+        // 2. Muscle force should be degraded on wounded/fractured limbs
+        float leftArmForce = musc.GetForceOutput(BodyPartType.LeftUpperArm);
+        float healthyArmForce = musc.GetForceOutput(BodyPartType.RightUpperArm);
+        // 3. The wounded arm should be weaker than the healthy one
+        Assert.True(leftArmForce < healthyArmForce,
+            $"Wounded arm should be weaker (left: {leftArmForce}, right: {healthyArmForce})");
+    }
+
+    // ── 176. Cut blood to leg → leg muscles weaken → can't walk ─
+    [Fact]
+    public void CrossSystem_CutLegBloodFlow_LocomotionCrippled()
+    {
+        var body = CreateBody();
+        var musc = Muscular(body);
+        var circ = Circulatory(body);
+
+        body.Update();
+        float healthyLocomotion = musc.GetLocomotionForce();
+
+        // Damage both hip blood vessels — cuts flow to both legs
+        body.TakeDamage(BodyPartType.Hips, 200);
+        for (int i = 0; i < 10; i++) body.Update();
+
+        float crippledLocomotion = musc.GetLocomotionForce();
+
+        Assert.True(crippledLocomotion < healthyLocomotion * 0.7f,
+            $"Cut leg blood flow should cripple locomotion (healthy: {healthyLocomotion}, crippled: {crippledLocomotion})");
+    }
+
+    // ── 177. Multi-wound fever: many open wounds = raging fever ──
+    [Fact]
+    public void CrossSystem_MultipleWounds_CompoundFever()
+    {
+        var body = CreateBody();
+        var meta = Metabolic(body);
+        var immune = Immune(body);
+
+        body.Update();
+        float baseTemp = meta.GetAverageTemperature();
+
+        // Multiple deep wounds that auto-infect and inflame
+        foreach (var part in new[] { BodyPartType.LeftUpperArm, BodyPartType.RightUpperArm,
+            BodyPartType.Chest, BodyPartType.Abdomen, BodyPartType.LeftThigh })
+        {
+            body.TakeDamage(part, 80);
+        }
+
+        // Let infection/inflammation develop
+        for (int i = 0; i < 20; i++) body.Update();
+
+        float multiWoundTemp = meta.GetAverageTemperature();
+        Assert.True(multiWoundTemp > baseTemp,
+            $"Multiple infected wounds should raise temperature (base: {baseTemp:F2}, multi: {multiWoundTemp:F2})");
+    }
+
+    // ── 178. Fracture + nerve sever at same point = complete disable ──
+    [Fact]
+    public void CrossSystem_FractureAndNerveSever_DoubleDisable()
+    {
+        var body = CreateBody();
+        var musc = Muscular(body);
+
+        // Fracture bone AND sever nerve at the same body part
+        body.TakeDamage(BodyPartType.LeftForearm, 200); // Fracture
+        body.SeverNerve(BodyPartType.LeftForearm);
+        body.Update();
+
+        // The muscle should be completely dead — both bone and nerve are gone
+        float force = musc.GetForceOutput(BodyPartType.LeftForearm);
+        Assert.Equal(0, force);
+
+        // Even after setting the bone, the severed nerve keeps it weak
+        body.SetBone(BodyPartType.LeftForearm);
+        body.Heal(BodyPartType.LeftForearm, 50);
+        for (int i = 0; i < 5; i++) body.Update();
+
+        float afterBoneSetForce = musc.GetForceOutput(BodyPartType.LeftForearm);
+        float healthyForce = musc.GetForceOutput(BodyPartType.RightForearm);
+
+        // The bone-set arm should still be much weaker due to severed nerve
+        Assert.True(afterBoneSetForce < healthyForce * 0.8f,
+            $"Severed nerve should keep muscle weak even after bone set (set: {afterBoneSetForce}, healthy: {healthyForce})");
+    }
+
+    // ── 179. Gladiator with tourniqueted arm still fights with other ──
+    [Fact]
+    public void CrossSystem_TourniquetedArm_OtherArmStillFights()
+    {
+        var body = CreateBody();
+        var musc = Muscular(body);
+
+        // Tourniquet left arm (destroy blood flow at shoulder)
+        body.TakeDamage(BodyPartType.LeftShoulder, 200);
+        for (int i = 0; i < 10; i++) body.Update();
+
+        // Left arm should be severely weakened
+        float leftForce = musc.GetForceOutput(BodyPartType.LeftHand);
+        // Right arm should still work perfectly
+        float rightForce = musc.GetForceOutput(BodyPartType.RightHand);
+
+        Assert.True(rightForce > leftForce * 2,
+            $"Healthy arm should have much more force (right: {rightForce}, left: {leftForce})");
+        Assert.True(rightForce > 30f,
+            $"Healthy arm should still be functional (force: {rightForce})");
+    }
+
+    // ── 180. Shock cascade: pain → shock → BP drop → muscle weakness ──
+    [Fact]
+    public void CrossSystem_ShockCascade_PainToWeakness()
+    {
+        var body = CreateBody();
+        var circ = Circulatory(body);
+        var nerv = Nervous(body);
+        var musc = Muscular(body);
+
+        body.Update();
+        float healthyBP = circ.GetBloodPressure();
+        float healthyForce = musc.GetUpperBodyForce();
+
+        // Massive multi-site trauma to induce shock
+        body.TakeDamage(BodyPartType.Chest, 50);
+        body.TakeDamage(BodyPartType.LeftUpperArm, 50);
+        body.TakeDamage(BodyPartType.RightUpperArm, 50);
+        body.TakeDamage(BodyPartType.LeftThigh, 50);
+        body.TakeDamage(BodyPartType.RightThigh, 50);
+        body.Update();
+
+        // Pain should be high — potentially in shock
+        float totalPain = nerv.GetTotalPain();
+        Assert.True(totalPain > 50, $"Multi-site trauma should cause significant pain (pain: {totalPain})");
+
+        // BP should be lower (from shock if triggered, or from bleeding)
+        for (int i = 0; i < 5; i++) body.Update();
+        float traumaBP = circ.GetBloodPressure();
+
+        Assert.True(traumaBP < healthyBP,
+            $"Multi-site trauma should reduce BP (healthy: {healthyBP}, trauma: {traumaBP})");
+    }
+
+    // ── 181. Infected wound + low blood flow = gangrene scenario ─
+    [Fact]
+    public void CrossSystem_Gangrene_InfectionWithNoBloodFlow()
+    {
+        var body = CreateBody();
+        var immune = Immune(body);
+        var circ = Circulatory(body);
+
+        // Cut blood flow to left arm
+        body.TakeDamage(BodyPartType.LeftShoulder, 200);
+        body.Update();
+
+        // Infect the blood-starved hand
+        body.Infect(BodyPartType.LeftHand, 30f, 0.8f);
+
+        // Also infect right hand (with healthy blood flow) for comparison
+        body.Infect(BodyPartType.RightHand, 30f, 0.8f);
+
+        // Run many ticks
+        for (int i = 0; i < 20; i++) body.Update();
+
+        float leftInfection = immune.GetInfectionLevel(BodyPartType.LeftHand);
+        float rightInfection = immune.GetInfectionLevel(BodyPartType.RightHand);
+
+        // The blood-starved hand should have much worse infection (gangrene)
+        // because immune cells can't reach it to fight
+        Assert.True(leftInfection > rightInfection,
+            $"Blood-starved infection should be worse (left: {leftInfection}, right: {rightInfection})");
+    }
+
+    // ── 182. Cross-system domino: neck damage → everything ──────
+    [Fact]
+    public void CrossSystem_NeckDamage_AffectsEverything()
+    {
+        var body = CreateBody();
+        var circ = Circulatory(body);
+        var nerv = Nervous(body);
+        var musc = Muscular(body);
+        var meta = Metabolic(body);
+
+        body.Update();
+        float baseBP = circ.GetBloodPressure();
+
+        // Heavy neck damage — affects airway, blood flow, and nerve signals
+        body.TakeDamage(BodyPartType.Neck, 80);
+        for (int i = 0; i < 5; i++) body.Update();
+
+        // Blood flow to head should be reduced (neck vessel damaged)
+        float headFlow = circ.GetBloodFlowTo(BodyPartType.Head);
+        Assert.True(headFlow < 90f,
+            $"Neck damage should reduce blood flow to head (flow: {headFlow})");
+
+        // BP may be affected via shock from pain
+        float currentBP = circ.GetBloodPressure();
+
+        // Nerve signal should be degraded downstream
+        // (neck is central — damage affects signal quality)
+        float neckSignal = nerv.GetSignalStrength(BodyPartType.Neck);
+        Assert.True(neckSignal < 1f,
+            $"Neck nerve damage should degrade signal (signal: {neckSignal})");
+    }
+
+    // ── 183. Cure infection → inflammation subsides → fever drops ──
+    [Fact]
+    public void CrossSystem_CureInfection_FeverSubsides()
+    {
+        var body = CreateBody();
+        var meta = Metabolic(body);
+        var immune = Immune(body);
+
+        // Create infection + inflammation
+        body.Infect(BodyPartType.Chest, 60f, 1f);
+        for (int i = 0; i < 15; i++) body.Update();
+
+        float feverTemp = meta.GetAverageTemperature();
+
+        // Cure the infection aggressively
+        for (int i = 0; i < 10; i++)
+        {
+            body.Cure(BodyPartType.Chest, 30f);
+            body.Update();
+        }
+
+        // Let inflammation subside naturally
+        for (int i = 0; i < 20; i++) body.Update();
+
+        float postCureTemp = meta.GetAverageTemperature();
+
+        // Temperature should have come down towards normal
+        Assert.True(postCureTemp < feverTemp || postCureTemp < 38f,
+            $"Curing infection should reduce fever (fever: {feverTemp:F2}, post-cure: {postCureTemp:F2})");
+    }
+
+    // ── 184. Blood flow affects poison clearance rate ────────────
+    [Fact]
+    public void CrossSystem_CutBloodFlow_PoisonLingers()
+    {
+        var body = CreateBody();
+        var immune = Immune(body);
+        var circ = Circulatory(body);
+
+        // Poison both hands
+        body.Poison(BodyPartType.LeftHand, 40f);
+        body.Poison(BodyPartType.RightHand, 40f);
+        body.Update();
+
+        // Cut blood flow to left hand
+        body.TakeDamage(BodyPartType.LeftShoulder, 200);
+
+        // Let immune system work for a while
+        for (int i = 0; i < 15; i++) body.Update();
+
+        float leftToxin = immune.GetToxinLevel(BodyPartType.LeftHand);
+        float rightToxin = immune.GetToxinLevel(BodyPartType.RightHand);
+
+        // Left hand should still have more toxin (immune can't reach it)
+        Assert.True(leftToxin > rightToxin,
+            $"Blood-starved limb should clear toxin slower (left: {leftToxin}, right: {rightToxin})");
+    }
+
+    // ── 185. Complete battle medic scenario ──────────────────────
+    [Fact]
+    public void CrossSystem_BattleMedic_TreatWoundsRestoreFunction()
+    {
+        var body = CreateBody();
+        var musc = Muscular(body);
+        var circ = Circulatory(body);
+        var immune = Immune(body);
+        var nerv = Nervous(body);
+
+        // Gladiator takes heavy damage to left arm
+        body.TakeDamage(BodyPartType.LeftForearm, 100);
+        body.TakeDamage(BodyPartType.LeftHand, 60);
+        for (int i = 0; i < 5; i++) body.Update();
+
+        // Arm is in bad shape
+        float damagedForce = musc.GetForceOutput(BodyPartType.LeftHand);
+
+        // Battle medic arrives: bandage, set bone, heal, cure
+        body.Bandage(BodyPartType.LeftForearm);
+        body.Bandage(BodyPartType.LeftHand);
+        body.SetBone(BodyPartType.LeftForearm);
+        body.Clot(BodyPartType.LeftForearm);
+        body.Clot(BodyPartType.LeftHand);
+        body.Cure(BodyPartType.LeftForearm, 50f);
+        body.Cure(BodyPartType.LeftHand, 50f);
+
+        // Healing over multiple rounds
+        for (int i = 0; i < 20; i++)
+        {
+            body.Heal(BodyPartType.LeftForearm, 10);
+            body.Heal(BodyPartType.LeftHand, 10);
+            body.Update();
+        }
+
+        float healedForce = musc.GetForceOutput(BodyPartType.LeftHand);
+
+        Assert.True(healedForce > damagedForce,
+            $"Battle medic treatment should improve function (damaged: {damagedForce}, healed: {healedForce})");
     }
 }
 

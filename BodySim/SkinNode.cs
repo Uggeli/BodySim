@@ -20,7 +20,7 @@ public class SkinNode : BodyPartNodeBase, IResourceNeedComponent
     public int BurnDegree { get; set; }
 
     /// <summary>Wound threshold — integrity below this means the skin is breached.</summary>
-    public float WoundThreshold { get; set; } = 40f;
+    public float WoundThreshold { get; set; } = 85f;
 
     public SkinNode(BodyPartType bodyPartType, bool isLargeSurface = false)
         : base(bodyPartType, [

@@ -208,11 +208,18 @@ public class ImmuneSystem : BodySystemBase
             // 1. Infection grows each tick (bacteria/virus reproducing)
             immune.GrowInfection();
 
-            // 2. Immune system fights infection
-            immune.FightInfection();
+            // 2. Immune system fights infection (scaled by blood flow — immune cells travel via blood)
+            float bloodFlowFactor = 1f;
+            var circulatory = GetSiblingSystem<CirculatorySystem>(BodySystemType.Circulatory);
+            if (circulatory != null)
+            {
+                float flow = circulatory.GetBloodFlowTo(bodyPartType);
+                bloodFlowFactor = Math.Clamp(flow / 100f, 0.05f, 1f); // Min 5% — some resident immune cells
+            }
+            immune.FightInfection(bloodFlowFactor);
 
-            // 3. Immune system neutralises toxins
-            immune.NeutraliseToxins();
+            // 3. Immune system neutralises toxins (also blood-flow dependent)
+            immune.NeutraliseToxins(bloodFlowFactor);
 
             // 4. Auto-inflammation for unchecked threats
             if (immune.IsInfected && immune.InfectionLevel >= InflammationThreshold && !immune.IsInflamed)
@@ -223,6 +230,12 @@ public class ImmuneSystem : BodySystemBase
             // 5. Inflammation boosts fight power but hurts the host
             if (immune.IsInflamed)
             {
+                // Active infection sustains and grows inflammation (immune escalation)
+                if (immune.IsInfected && immune.InfectionLevel >= InflammationThreshold)
+                {
+                    immune.Inflame(immune.InfectionLevel * 0.05f); // Inflammation scales with infection
+                }
+
                 // Inflammation damages the node's own health
                 node.GetComponent(BodyComponentType.Health)?.Decrease(immune.InflammationLevel * 0.02f);
 

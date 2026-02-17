@@ -54,6 +54,8 @@ public class MuscularSystem : BodySystemBase
         eventHub.RegisterListener<RestEvent>(this);
         eventHub.RegisterListener<MuscleTearEvent>(this);
         eventHub.RegisterListener<MuscleRepairEvent>(this);
+        eventHub.RegisterListener<FractureEvent>(this);
+        eventHub.RegisterListener<BoneSetEvent>(this);
         eventHub.RegisterListener<PropagateEffectEvent>(this);
     }
 
@@ -69,6 +71,8 @@ public class MuscularSystem : BodySystemBase
             case RestEvent re: HandleRest(re); break;
             case MuscleTearEvent te: HandleTear(te.BodyPartType); break;
             case MuscleRepairEvent rpe: HandleRepair(rpe.BodyPartType); break;
+            case FractureEvent fe: HandleFracture(fe); break;
+            case BoneSetEvent bse: HandleBoneSet(bse); break;
             case PropagateEffectEvent pe: HandlePropagateEffect(pe); break;
         }
     }
@@ -98,9 +102,21 @@ public class MuscularSystem : BodySystemBase
 
         node.GetComponent(BodyComponentType.Health)?.Increase(evt.Heal);
         node.GetComponent(BodyComponentType.MuscleStrength)?.Increase(evt.Heal * 0.3f);
+        node.GetComponent(BodyComponentType.Stamina)?.Increase(evt.Heal * 0.2f);
+
+        // Sufficient healing can repair a torn muscle (medical treatment)
+        if (node is MuscleNode muscle && muscle.IsTorn)
+        {
+            var health = node.GetComponent(BodyComponentType.Health);
+            if (health != null && health.Current >= health.Max * 0.3f)
+            {
+                // Enough health restored to begin muscle repair
+                muscle.Repair();
+            }
+        }
 
         // Re-enable if healed above zero and not torn
-        if (node.Status.HasFlag(SystemNodeStatus.Disabled) && node is MuscleNode muscle && !muscle.IsTorn)
+        if (node.Status.HasFlag(SystemNodeStatus.Disabled) && node is MuscleNode m && !m.IsTorn)
         {
             var health = node.GetComponent(BodyComponentType.Health);
             if (health != null && health.Current > 0)
@@ -154,6 +170,31 @@ public class MuscularSystem : BodySystemBase
         {
             EnableDownstreamNodes(bodyPartType);
         }
+    }
+
+    void HandleFracture(FractureEvent evt)
+    {
+        // Cross-system: a fractured bone disables the muscle at that body part
+        // (can't flex a broken arm)
+        if (!Statuses.TryGetValue(evt.BodyPartType, out var node) || node is not MuscleNode muscle) return;
+
+        // Disable the muscle at the fracture site
+        muscle.Status = SystemNodeStatus.Disabled;
+    }
+
+    void HandleBoneSet(BoneSetEvent evt)
+    {
+        // Cross-system: setting a bone re-enables the muscle
+        if (!Statuses.TryGetValue(evt.BodyPartType, out var node) || node is not MuscleNode muscle) return;
+
+        // If the muscle was torn by the same trauma that caused the fracture,
+        // setting the bone also splints the muscle enough to begin recovery
+        if (muscle.IsTorn)
+        {
+            muscle.Repair();
+        }
+
+        muscle.Status = SystemNodeStatus.Healthy;
     }
 
     void HandlePropagateEffect(PropagateEffectEvent evt)
@@ -250,6 +291,50 @@ public class MuscularSystem : BodySystemBase
         foreach ((BodyPartType bodyPartType, BodyPartNodeBase node) in Statuses)
         {
             if (node is not MuscleNode muscle) continue;
+
+            // Cross-system: nerve signal affects muscle control
+            var nervous = GetSiblingSystem<NervousSystem>(BodySystemType.Nerveus);
+            if (nervous != null)
+            {
+                float signal = nervous.GetSignalStrength(bodyPartType);
+                // Low signal degrades strength output (can't fire muscles without nerve signal)
+                if (signal < 0.5f)
+                {
+                    float signalPenalty = (0.5f - signal) * 2f; // 0-1 range penalty
+                    muscle.GetComponent(BodyComponentType.MuscleStrength)?.Decrease(signalPenalty * 0.5f);
+                }
+            }
+
+            // Cross-system: blood flow affects muscle stamina recovery and oxygenation
+            var circulatory = GetSiblingSystem<CirculatorySystem>(BodySystemType.Circulatory);
+            if (circulatory != null)
+            {
+                float flow = circulatory.GetBloodFlowTo(bodyPartType);
+                float flowPct = flow / 100f;
+                // Low blood flow = muscles can't get oxygen, stamina drains
+                if (flowPct < 0.3f)
+                {
+                    float ischemiaFactor = 1f - (flowPct / 0.3f); // 0–1, higher = worse
+                    // Heavy stamina drain that overcomes natural regen (regen is 2.0/tick)
+                    muscle.GetComponent(BodyComponentType.Stamina)?.Decrease(ischemiaFactor * 12f);
+                    // Suppress stamina regen — can't recover without blood
+                    var staminaComp = muscle.GetComponent(BodyComponentType.Stamina);
+                    if (staminaComp != null) staminaComp.RegenRate = flowPct * 2f; // 0 regen at 0 flow
+                    // Ischemia also degrades strength over time (tissue death)
+                    muscle.GetComponent(BodyComponentType.MuscleStrength)?.Decrease(ischemiaFactor * 3f);
+                    // Suppress strength regen under ischemia
+                    var strengthComp = muscle.GetComponent(BodyComponentType.MuscleStrength);
+                    if (strengthComp != null) strengthComp.RegenRate = flowPct * 0.5f;
+                }
+                else
+                {
+                    // Restore normal stamina regen when flow is adequate
+                    var staminaComp = muscle.GetComponent(BodyComponentType.Stamina);
+                    if (staminaComp != null && !muscle.IsTorn) staminaComp.RegenRate = 2f;
+                    var strengthComp = muscle.GetComponent(BodyComponentType.MuscleStrength);
+                    if (strengthComp != null && !muscle.IsTorn) strengthComp.RegenRate = 0.5f;
+                }
+            }
 
             // Check for fatigue (low stamina)
             UpdateFatigueStatus(muscle);
