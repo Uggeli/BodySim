@@ -33,6 +33,22 @@ namespace BodySim
     public readonly record struct SuffocateEvent(BodyPartType BodyPartType) : IEvent; // Airway blocked
     public readonly record struct ClearAirwayEvent(BodyPartType BodyPartType) : IEvent; // Airway unblocked
 
+    // Muscular events
+    public readonly record struct ExertEvent(BodyPartType BodyPartType, float Intensity) : IEvent; // Muscle exertion (0–100)
+    public readonly record struct RestEvent(BodyPartType BodyPartType) : IEvent; // Muscle rest / stop exerting
+    public readonly record struct MuscleTearEvent(BodyPartType BodyPartType) : IEvent; // Muscle tear
+    public readonly record struct MuscleRepairEvent(BodyPartType BodyPartType) : IEvent; // Repair a torn muscle
+
+    // Integumentary events
+    public readonly record struct BurnEvent(BodyPartType BodyPartType, float Intensity) : IEvent; // Heat/fire burn
+    public readonly record struct BandageEvent(BodyPartType BodyPartType) : IEvent; // Apply bandage to wound
+    public readonly record struct RemoveBandageEvent(BodyPartType BodyPartType) : IEvent; // Remove bandage
+
+    // Immune events
+    public readonly record struct InfectionEvent(BodyPartType BodyPartType, float Severity, float GrowthRate = 0.3f) : IEvent; // Bacterial/viral infection
+    public readonly record struct ToxinEvent(BodyPartType BodyPartType, float Amount) : IEvent; // Poison/toxin exposure
+    public readonly record struct CureEvent(BodyPartType BodyPartType, float Potency, bool CuresInfection = true, bool CuresToxin = true) : IEvent; // Medicine/antidote
+
     // Propagate Effects
     public record ImpactEffect(
         float InitialValue,

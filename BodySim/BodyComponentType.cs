@@ -11,4 +11,7 @@ public enum BodyComponentType: byte
     BloodFlow,
     LungCapacity,
     AirFlow,
+    MuscleStrength,
+    SkinIntegrity,
+    ImmunePotency,
 }
