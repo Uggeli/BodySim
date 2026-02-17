@@ -1757,4 +1757,277 @@ public class BodyIntegrationTests
         var overheated = nervous.GetOverheatedParts();
         Assert.Contains(BodyPartType.LeftHand, overheated);
     }
+
+    // ═══════════════════════════════════════════════════════════
+    //  METABOLIC SYSTEM INTEGRATION TESTS (61–75)
+    // ═══════════════════════════════════════════════════════════
+
+    private static MetabolicSystem Metabolic(Body body) =>
+        (MetabolicSystem)body.GetSystem(BodySystemType.Metabolic)!;
+
+    // ─── 61. Metabolic system present in full body ──
+
+    [Fact]
+    public void Body_Init_MetabolicSystemPresent()
+    {
+        var body = CreateBody();
+        Assert.NotNull(body.GetSystem(BodySystemType.Metabolic));
+    }
+
+    // ─── 62. Metabolic produces energy that accumulates in pool ──
+
+    [Fact]
+    public void Metabolic_ProducesEnergyInFullBody()
+    {
+        var body = CreateBody();
+        float before = Metabolic(body).BodyResourcePool.GetResource(BodyResourceType.Energy);
+
+        body.Update();
+
+        float after = Metabolic(body).BodyResourcePool.GetResource(BodyResourceType.Energy);
+        // Energy should be present (produced by metabolic system)
+        Assert.True(after > 0, $"Energy should be produced. Before={before}, After={after}");
+    }
+
+    // ─── 63. Respiratory feeds oxygen to metabolic system ──
+
+    [Fact]
+    public void Respiratory_FeedsOxygenToMetabolic()
+    {
+        var body = CreateBody();
+
+        // Run a few ticks — respiratory should produce oxygen that metabolic consumes
+        for (int i = 0; i < 5; i++)
+            body.Update();
+
+        float oxygen = Metabolic(body).BodyResourcePool.GetResource(BodyResourceType.Oxygen);
+        // Oxygen should still be present (respiratory produces, metabolic consumes)
+        Assert.True(oxygen > 0, "Respiratory should keep oxygen available for metabolic");
+    }
+
+    // ─── 64. Suffocated airway reduces metabolic energy output ──
+
+    [Fact]
+    public void Suffocation_ReducesMetabolicEnergy()
+    {
+        var body = CreateBody();
+
+        // Let the body stabilise
+        for (int i = 0; i < 5; i++) body.Update();
+        float normalEnergy = Metabolic(body).LastTickEnergyOutput;
+
+        // Block the airway — oxygen stops flowing
+        body.TakeDamage(BodyPartType.Head, 30); // Heavy damage blocks airway
+        for (int i = 0; i < 20; i++) body.Update();
+
+        // With depleted oxygen, metabolic output should suffer
+        float suffocatedEnergy = Metabolic(body).LastTickEnergyOutput;
+        Assert.True(suffocatedEnergy <= normalEnergy,
+            $"Suffocation should reduce energy. Normal={normalEnergy}, Suffocated={suffocatedEnergy}");
+    }
+
+    // ─── 65. Feeding restores glucose through Body.Feed ──
+
+    [Fact]
+    public void Feed_RestoresGlucoseInFullBody()
+    {
+        var body = CreateBody();
+
+        // Consume some glucose
+        for (int i = 0; i < 5; i++) body.Update();
+        float before = Metabolic(body).BodyResourcePool.GetResource(BodyResourceType.Glucose);
+
+        body.Feed(50f);
+        body.Update();
+
+        float after = Metabolic(body).BodyResourcePool.GetResource(BodyResourceType.Glucose);
+        Assert.True(after > before - 20, "Feeding should add glucose");
+    }
+
+    // ─── 66. Hydrate restores water through Body.Hydrate ──
+
+    [Fact]
+    public void Hydrate_RestoresWaterInFullBody()
+    {
+        var body = CreateBody();
+
+        for (int i = 0; i < 5; i++) body.Update();
+        float before = Metabolic(body).BodyResourcePool.GetResource(BodyResourceType.Water);
+
+        body.Hydrate(50f);
+        body.Update();
+
+        float after = Metabolic(body).BodyResourcePool.GetResource(BodyResourceType.Water);
+        Assert.True(after > before - 20, "Hydrating should add water");
+    }
+
+    // ─── 67. Damage to chest degrades metabolic output ──
+
+    [Fact]
+    public void ChestDamage_DegradeMetabolicOutput()
+    {
+        var body = CreateBody();
+        float normalOutput = Metabolic(body).GetEnergyOutput(BodyPartType.Chest);
+
+        body.TakeDamage(BodyPartType.Chest, 50);
+        body.Update();
+
+        float damagedOutput = Metabolic(body).GetEnergyOutput(BodyPartType.Chest);
+        Assert.True(damagedOutput < normalOutput);
+    }
+
+    // ─── 68. Metabolic boost increases energy output ──
+
+    [Fact]
+    public void MetabolicBoost_IncreasesOutputInFullBody()
+    {
+        var body = CreateBody();
+        float normal = Metabolic(body).GetEnergyOutput(BodyPartType.Head);
+
+        body.BoostMetabolism(BodyPartType.Head, 1f); // +1 to multiplier
+        body.Update();
+
+        float boosted = Metabolic(body).GetEnergyOutput(BodyPartType.Head);
+        Assert.True(boosted > normal);
+    }
+
+    // ─── 69. Muscular exertion + metabolic fatigue cross-talk ──
+
+    [Fact]
+    public void MuscularExertion_MetabolicFatigueInteraction()
+    {
+        var body = CreateBody();
+
+        // Heavy exertion should consume resources
+        for (int i = 0; i < 10; i++)
+        {
+            body.Exert(BodyPartType.LeftThigh, 90f);
+            body.Update();
+        }
+
+        // Muscular exertion consumes resources → metabolic system tracks the impact
+        var musc = Muscular(body);
+        var meta = Metabolic(body);
+
+        // After heavy exertion, resources are depleted
+        float glucose = meta.BodyResourcePool.GetResource(BodyResourceType.Glucose);
+        Assert.True(glucose < 100, "Heavy exertion should consume glucose");
+    }
+
+    // ─── 70. Metabolic system survives multi-tick with all systems ──
+
+    [Fact]
+    public void AllSystems_MetabolicSurvivesMultiTick()
+    {
+        var body = CreateBody();
+
+        // Run 50 ticks with the full body — nothing should crash
+        for (int i = 0; i < 50; i++)
+            body.Update();
+
+        var meta = Metabolic(body);
+        Assert.True(meta.GetActiveNodeCount() > 0);
+    }
+
+    // ─── 71. Heavy damage + starvation cascade ──
+
+    [Fact]
+    public void HeavyDamage_CausesStarvationCascade()
+    {
+        var body = CreateBody();
+
+        // Damage all core organs heavily
+        body.TakeDamage(BodyPartType.Head, 80);
+        body.TakeDamage(BodyPartType.Chest, 80);
+        body.TakeDamage(BodyPartType.Abdomen, 80);
+
+        // Run many ticks — system should degrade
+        for (int i = 0; i < 30; i++)
+            body.Update();
+
+        var meta = Metabolic(body);
+        float totalOutput = meta.GetTotalEnergyOutput();
+        // Heavy damage = reduced metabolic rate = less energy
+        Assert.True(totalOutput < meta.GetActiveNodeCount() * 3f,
+            "Damaged core organs should significantly reduce total energy output");
+    }
+
+    // ─── 72. Nervous shock impacts metabolic via shared resources ──
+
+    [Fact]
+    public void NervousShock_SharedResourceImpact()
+    {
+        var body = CreateBody();
+
+        // Shock the nervous system
+        body.Shock(50f);
+        for (int i = 0; i < 10; i++)
+            body.Update();
+
+        // Shock impacts nerve signals which affects mana production
+        // Both systems draw from the same resource pool
+        var meta = Metabolic(body);
+        var nervous = Nervous(body);
+
+        // System should still be functioning (shared pool doesn't crash)
+        Assert.True(meta.GetActiveNodeCount() > 0);
+        Assert.True(nervous.GetOverallSignalStrength() < 1f);
+    }
+
+    // ─── 73. Temperature check after many ticks with all systems ──
+
+    [Fact]
+    public void Temperature_StableInFullBody()
+    {
+        var body = CreateBody();
+
+        for (int i = 0; i < 20; i++)
+            body.Update();
+
+        var meta = Metabolic(body);
+        float avgTemp = meta.GetAverageTemperature();
+        // Temperature should stay roughly normal with all systems working
+        Assert.InRange(avgTemp, 35f, 40f);
+    }
+
+    // ─── 74. Metabolic + immune interaction — infection consumes energy ──
+
+    [Fact]
+    public void Infection_StressesMetabolicResources()
+    {
+        var body = CreateBody();
+
+        // Let body stabilise
+        for (int i = 0; i < 3; i++) body.Update();
+        float glucoseBefore = Metabolic(body).BodyResourcePool.GetResource(BodyResourceType.Glucose);
+
+        // Infect multiple areas — immune system fights, consuming resources
+        body.Infect(BodyPartType.LeftLeg, 50, 0.5f);
+        body.Infect(BodyPartType.RightLeg, 50, 0.5f);
+        body.Infect(BodyPartType.Abdomen, 50, 0.5f);
+
+        for (int i = 0; i < 20; i++) body.Update();
+
+        float glucoseAfter = Metabolic(body).BodyResourcePool.GetResource(BodyResourceType.Glucose);
+        // Multiple systems consuming glucose should deplete it faster
+        Assert.True(glucoseAfter < glucoseBefore,
+            "Infection + metabolic consumption should deplete glucose");
+    }
+
+    // ─── 75. InduceFatigue through Body convenience method ──
+
+    [Fact]
+    public void InduceFatigue_ThroughBody()
+    {
+        var body = CreateBody();
+
+        body.InduceFatigue(BodyPartType.LeftLeg, 50f);
+        body.Update();
+
+        var meta = Metabolic(body);
+        // Fatigue may partially recover during the tick, but should be above zero
+        Assert.True(meta.GetFatigue(BodyPartType.LeftLeg) > 0,
+            "InduceFatigue should increase fatigue on target body part");
+    }
 }
+

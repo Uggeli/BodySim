@@ -16,4 +16,6 @@ public enum BodyComponentType: byte
     ImmunePotency,
     NerveSignal,
     MagicalHeat,
+    MetabolicRate,
+    BodyTemperature,
 }

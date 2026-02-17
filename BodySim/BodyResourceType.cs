@@ -10,4 +10,6 @@ public enum BodyResourceType
     Calcium,
     // Waste
     CarbonDioxide,
+    // Metabolic
+    Energy, // ATP — universal cellular fuel
 }

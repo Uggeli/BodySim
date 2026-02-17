@@ -54,6 +54,12 @@ namespace BodySim
     public readonly record struct NerveRepairEvent(BodyPartType BodyPartType) : IEvent; // Nerve repaired
     public readonly record struct ShockEvent(float Intensity) : IEvent; // Systemic shock (affects all nerves)
 
+    // Metabolic events
+    public readonly record struct MetabolicBoostEvent(BodyPartType BodyPartType, float Multiplier) : IEvent; // Boost/suppress metabolism
+    public readonly record struct FatigueEvent(BodyPartType BodyPartType, float Amount) : IEvent; // Induce fatigue
+    public readonly record struct FeedEvent(float Amount) : IEvent; // Add glucose (eating)
+    public readonly record struct HydrateEvent(float Amount) : IEvent; // Add water (drinking)
+
     // Propagate Effects
     public record ImpactEffect(
         float InitialValue,

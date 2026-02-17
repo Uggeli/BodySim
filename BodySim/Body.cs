@@ -22,6 +22,7 @@ public class Body
         Systems[BodySystemType.Muscular] = new MuscularSystem(ResourcePool, EventHub);
         Systems[BodySystemType.Immune] = new ImmuneSystem(ResourcePool, EventHub);
         Systems[BodySystemType.Nerveus] = new NervousSystem(ResourcePool, EventHub);
+        Systems[BodySystemType.Metabolic] = new MetabolicSystem(ResourcePool, EventHub);
     }
 
     public void Update()
@@ -120,6 +121,26 @@ public class Body
     public void Shock(float intensity)
     {
         EventHub.Emit(new ShockEvent(intensity));
+    }
+
+    public void Feed(float amount)
+    {
+        EventHub.Emit(new FeedEvent(amount));
+    }
+
+    public void Hydrate(float amount)
+    {
+        EventHub.Emit(new HydrateEvent(amount));
+    }
+
+    public void BoostMetabolism(BodyPartType bodyPart, float multiplier)
+    {
+        EventHub.Emit(new MetabolicBoostEvent(bodyPart, multiplier));
+    }
+
+    public void InduceFatigue(BodyPartType bodyPart, float amount)
+    {
+        EventHub.Emit(new FatigueEvent(bodyPart, amount));
     }
 
     public BodySystemBase? GetSystem(BodySystemType systemType)
