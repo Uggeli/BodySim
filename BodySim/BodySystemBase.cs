@@ -37,6 +37,8 @@ public abstract class BodySystemBase(BodySystemType bodySystemType, BodyResource
         }
         return null;
     }
+
+    public IReadOnlyDictionary<BodyPartType, BodyPartNodeBase> GetNodes() => Statuses;
     
     public virtual void MetabolicUpdate()
     {

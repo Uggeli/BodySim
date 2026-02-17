@@ -1,3 +1,5 @@
+using System.Text.Json;
+
 namespace BodySim;
 
 public class Body
@@ -60,5 +62,34 @@ public class Body
     public BodySystemBase? GetSystem(BodySystemType systemType)
     {
         return Systems.TryGetValue(systemType, out BodySystemBase? system) ? system : null;
+    }
+
+    public string ExportForGodotJson(bool indented = false)
+    {
+        var payload = new
+        {
+            resources = ResourcePool.GetResources().ToDictionary(r => r.Key.ToString(), r => r.Value),
+            systems = Systems.ToDictionary(
+                system => system.Key.ToString(),
+                system => system.Value.GetNodes().ToDictionary(
+                    node => node.Key.ToString(),
+                    node => new
+                    {
+                        status = node.Value.Status.ToString(),
+                        components = node.Value.Components.ToDictionary(
+                            component => component.ComponentType.ToString(),
+                            component => new
+                            {
+                                current = component.Current,
+                                max = component.Max,
+                                regenRate = component.RegenRate,
+                            }),
+                    }))
+        };
+
+        return JsonSerializer.Serialize(payload, new JsonSerializerOptions
+        {
+            WriteIndented = indented
+        });
     }
 }
