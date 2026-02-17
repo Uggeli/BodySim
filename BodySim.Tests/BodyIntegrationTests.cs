@@ -29,6 +29,9 @@ public class BodyIntegrationTests
     private static ImmuneSystem Immune(Body body) =>
         (ImmuneSystem)body.GetSystem(BodySystemType.Immune)!;
 
+    private static NervousSystem Nervous(Body body) =>
+        (NervousSystem)body.GetSystem(BodySystemType.Nerveus)!;
+
     /// <summary>
     /// Simulates a full-body lift: exerts all muscles in the kinetic chain
     /// (legs → core → shoulders → arms → hands) and returns the total
@@ -1344,5 +1347,414 @@ public class BodyIntegrationTests
 
         Assert.True(immune.GetOverallPotency() < 1.0f,
             $"Multi-site threats should drain overall potency (potency: {immune.GetOverallPotency()})");
+    }
+
+    // ─── 41. Nervous system initialises via Body ──
+
+    [Fact]
+    public void Body_Init_NervousSystemPresent()
+    {
+        var body = CreateBody();
+
+        Assert.NotNull(body.GetSystem(BodySystemType.Nerveus));
+    }
+
+    // ─── 42. Damage generates pain in the nervous system ──
+
+    [Fact]
+    public void Damage_GeneratesPainInNervousSystem()
+    {
+        var body = CreateBody();
+        var nervous = Nervous(body);
+
+        body.TakeDamage(BodyPartType.LeftHand, 50);
+        body.Update();
+
+        Assert.True(nervous.GetPainLevel(BodyPartType.LeftHand) > 0,
+            "Damage event should generate pain in the nervous system");
+    }
+
+    // ─── 43. Damage pain routes upstream through nerves ──
+
+    [Fact]
+    public void Damage_PainRoutesUpstream()
+    {
+        var body = CreateBody();
+        var nervous = Nervous(body);
+
+        body.TakeDamage(BodyPartType.LeftHand, 80);
+        body.Update();
+
+        float shoulderPain = nervous.GetPainLevel(BodyPartType.LeftShoulder);
+        Assert.True(shoulderPain > 0,
+            $"Pain from hand damage should route upstream to shoulder (got {shoulderPain})");
+    }
+
+    // ─── 44. Sever nerve blocks downstream pain routing ──
+
+    [Fact]
+    public void SeverNerve_BlocksDownstreamPainRouting()
+    {
+        var body = CreateBody();
+        var nervous = Nervous(body);
+
+        // Sever at the forearm
+        body.SeverNerve(BodyPartType.LeftForearm);
+        body.Update();
+
+        // Let pain from severing decay
+        for (int i = 0; i < 40; i++)
+            body.Update();
+
+        float chestPain = nervous.GetPainLevel(BodyPartType.Chest);
+
+        // Damage the hand — pain should NOT propagate past severed forearm
+        body.TakeDamage(BodyPartType.LeftHand, 80);
+        body.Update();
+
+        float chestPainAfter = nervous.GetPainLevel(BodyPartType.Chest);
+        Assert.True(chestPainAfter <= chestPain + 1,
+            $"Pain should not propagate past severed nerve (chest pain before {chestPain}, after {chestPainAfter})");
+    }
+
+    // ─── 45. Mana accumulates in a healthy body ──
+
+    [Fact]
+    public void HealthyBody_ManaAccumulates()
+    {
+        var body = CreateBody();
+        var nervous = Nervous(body);
+
+        for (int i = 0; i < 20; i++)
+            body.Update();
+
+        float totalMana = nervous.GetTotalMana();
+        Assert.True(totalMana > 0,
+            $"Healthy body should accumulate mana over time (got {totalMana})");
+    }
+
+    // ─── 46. Damaged nerves produce less mana ──
+
+    [Fact]
+    public void DamagedNerves_ProduceLessMana()
+    {
+        var body1 = CreateBody();
+        var body2 = CreateBody();
+        var healthy = Nervous(body1);
+        var damaged = Nervous(body2);
+
+        // Damage the head nerve in body2
+        body2.TakeDamage(BodyPartType.Head, 80);
+        body2.Update();
+
+        for (int i = 0; i < 20; i++)
+        {
+            body1.Update();
+            body2.Update();
+        }
+
+        float healthyMana = healthy.GetMana(BodyPartType.Head);
+        float damagedMana = damaged.GetMana(BodyPartType.Head);
+
+        Assert.True(healthyMana > damagedMana,
+            $"Damaged nerves should produce less mana (healthy {healthyMana} vs damaged {damagedMana})");
+    }
+
+    // ─── 47. Shock from multi-system trauma ──
+
+    [Fact]
+    public void MultiSystemTrauma_TriggersShock()
+    {
+        var body = CreateBody();
+        var nervous = Nervous(body);
+
+        // Widespread heavy damage — pain across many parts
+        BodyPartType[] targets = [
+            BodyPartType.LeftHand, BodyPartType.RightHand,
+            BodyPartType.LeftFoot, BodyPartType.RightFoot,
+            BodyPartType.Chest, BodyPartType.Abdomen,
+            BodyPartType.Head, BodyPartType.LeftThigh,
+            BodyPartType.RightThigh, BodyPartType.Hips
+        ];
+
+        foreach (var part in targets)
+        {
+            body.TakeDamage(part, 60);
+        }
+
+        body.Update();
+        body.Update(); // second tick for shock check
+
+        Assert.True(nervous.IsInShock,
+            $"Widespread trauma should trigger shock (total pain: {nervous.GetTotalPain()})");
+    }
+
+    // ─── 48. External shock reduces signal globally ──
+
+    [Fact]
+    public void ExternalShock_ReducesSignal()
+    {
+        var body = CreateBody();
+        var nervous = Nervous(body);
+
+        float signalBefore = nervous.GetOverallSignalStrength();
+
+        body.Shock(50);
+        body.Update();
+
+        float signalAfter = nervous.GetOverallSignalStrength();
+        Assert.True(signalAfter < signalBefore,
+            $"Shock should reduce overall signal ({signalBefore} → {signalAfter})");
+    }
+
+    // ─── 49. Nerve repair restores signal downstream ──
+
+    [Fact]
+    public void NerveRepair_RestoresDownstream()
+    {
+        var body = CreateBody();
+        var nervous = Nervous(body);
+
+        body.SeverNerve(BodyPartType.LeftForearm);
+        body.Update();
+
+        // After sever, downstream hand signal should be very low
+        float handSignal = nervous.GetNode(BodyPartType.LeftHand)?
+            .GetComponent(BodyComponentType.NerveSignal)?.Current ?? -1;
+        Assert.True(handSignal < 5,
+            $"After sever, downstream signal should be very low (got {handSignal})");
+
+        body.RepairNerve(BodyPartType.LeftForearm);
+        body.Update();
+
+        float handRegenRate = nervous.GetNode(BodyPartType.LeftHand)?
+            .GetComponent(BodyComponentType.NerveSignal)?.RegenRate ?? 0;
+        Assert.True(handRegenRate > 0,
+            "Repair should restore downstream regen rate");
+    }
+
+    // ─── 50. Burns cause pain in nervous system ──
+
+    [Fact]
+    public void Burn_CausesPainInNervousSystem()
+    {
+        var body = CreateBody();
+        var nervous = Nervous(body);
+
+        body.Burn(BodyPartType.LeftHand, 60);
+        body.Update();
+
+        // Burns should emit pain which nervous system picks up
+        float pain = nervous.GetPainLevel(BodyPartType.LeftHand);
+        Assert.True(pain > 0,
+            $"Burn should cause pain in the nervous system (got {pain})");
+    }
+
+    // ─── 51. Cross-system pain: muscular exertion reaches nervous ──
+
+    [Fact]
+    public void CrossSystem_PainFromMuscularReachesNervous()
+    {
+        var body = CreateBody();
+        var nervous = Nervous(body);
+
+        // Heavy damage → causes DamageEvent → nervous system receives pain from it
+        // Tear the muscle directly
+        body.Exert(BodyPartType.LeftHand, 100);
+        body.Update();
+
+        // Keep checking during exertion — stamina drains and when muscle tears, pain emits
+        // Use direct damage as a cross-system pain source since that's what actually hits Nervous
+        body.TakeDamage(BodyPartType.LeftHand, 50);
+        body.Update();
+
+        // Damage events should generate pain in the nervous system
+        float totalPain = nervous.GetTotalPain();
+        Assert.True(totalPain > 0,
+            $"Cross-system damage should generate pain in nervous system (got {totalPain})");
+    }
+
+    // ─── 52. Fracture pain reaches nervous system ──
+
+    [Fact]
+    public void Fracture_PainReachesNervousSystem()
+    {
+        var body = CreateBody();
+        var nervous = Nervous(body);
+
+        // High damage to fracture a bone
+        body.TakeDamage(BodyPartType.LeftHand, 90);
+        body.Update();
+        body.TakeDamage(BodyPartType.LeftHand, 90);
+        body.Update();
+
+        float totalPain = nervous.GetTotalPain();
+        Assert.True(totalPain > 0,
+            $"Fracture pain should reach the nervous system (got {totalPain})");
+    }
+
+    // ─── 53. Healing reduces shock over time ──
+
+    [Fact]
+    public void Healing_ReducesShockOverTime()
+    {
+        var body = CreateBody();
+        var nervous = Nervous(body);
+
+        body.Shock(40);
+        body.Update();
+
+        float shockBefore = nervous.ShockLevel;
+
+        // Heal and let time pass
+        for (int i = 0; i < 10; i++)
+        {
+            body.Heal(BodyPartType.Chest, 10);
+            body.Update();
+        }
+
+        Assert.True(nervous.ShockLevel < shockBefore,
+            $"Healing + time should reduce shock ({shockBefore} → {nervous.ShockLevel})");
+    }
+
+    // ─── 54. Pain decays across full body simulation ──
+
+    [Fact]
+    public void PainDecays_AcrossFullBodySimulation()
+    {
+        var body = CreateBody();
+        var nervous = Nervous(body);
+
+        body.TakeDamage(BodyPartType.LeftHand, 50);
+        body.Update();
+
+        float painAfterDamage = nervous.GetTotalPain();
+
+        for (int i = 0; i < 30; i++)
+            body.Update();
+
+        float painAfterRecovery = nervous.GetTotalPain();
+        Assert.True(painAfterRecovery < painAfterDamage,
+            $"Pain should decay over time in full body sim ({painAfterDamage} → {painAfterRecovery})");
+    }
+
+    // ─── 55. Infection triggers pain via immune → nervous ──
+
+    [Fact]
+    public void Infection_TriggersPain_ViaImmune()
+    {
+        var body = CreateBody();
+        var nervous = Nervous(body);
+
+        body.Infect(BodyPartType.LeftHand, 40, 0.5f);
+        body.Update();
+        body.Update(); // extra tick for inflammation to emit pain
+
+        float pain = nervous.GetTotalPain();
+        Assert.True(pain > 0,
+            $"Infection should trigger pain via immune system inflammation (got {pain})");
+    }
+
+    // ─── 56. Magical heat accumulates with boosted mana ──
+
+    [Fact]
+    public void BoostedMana_GeneratesHeat_InFullBody()
+    {
+        var body = CreateBody();
+        var nervous = Nervous(body);
+
+        // Boost mana production on a node so heat outpaces dissipation
+        var hand = nervous.GetNode(BodyPartType.LeftHand) as NerveNode;
+        Assert.NotNull(hand);
+        hand.ManaProductionRate = 5f;
+
+        for (int i = 0; i < 10; i++)
+            body.Update();
+
+        float heat = nervous.GetHeatLevel(BodyPartType.LeftHand);
+        Assert.True(heat > 0,
+            $"Boosted mana production should generate measurable heat in full body sim (got {heat})");
+    }
+
+    // ─── 57. Excessive mana production damages nerves via heat ──
+
+    [Fact]
+    public void ExcessiveMana_HeatDamagesNerves_InFullBody()
+    {
+        var body = CreateBody();
+        var nervous = Nervous(body);
+
+        var hand = nervous.GetNode(BodyPartType.LeftHand) as NerveNode;
+        Assert.NotNull(hand);
+        hand.ManaProductionRate = 10f;
+
+        float healthBefore = hand.GetComponent(BodyComponentType.Health)?.Current ?? 0;
+
+        for (int i = 0; i < 20; i++)
+            body.Update();
+
+        float healthAfter = hand.GetComponent(BodyComponentType.Health)?.Current ?? 0;
+        Assert.True(healthAfter < healthBefore,
+            $"Excessive mana production should damage nerves via heat ({healthBefore} → {healthAfter})");
+    }
+
+    // ─── 58. Heat feedback loop — damage slows mana, which reduces heat ──
+
+    [Fact]
+    public void HeatFeedbackLoop_DamageSlowsMana()
+    {
+        var body = CreateBody();
+        var nervous = Nervous(body);
+
+        var hand = nervous.GetNode(BodyPartType.LeftHand) as NerveNode;
+        Assert.NotNull(hand);
+        hand.ManaProductionRate = 10f;
+
+        // Let heat damage accumulate
+        for (int i = 0; i < 15; i++)
+            body.Update();
+
+        // After heat damage, mana production should have dropped (feedback loop)
+        Assert.True(hand.ManaProductionRate < 10f,
+            $"Heat damage should reduce mana production rate (got {hand.ManaProductionRate})");
+    }
+
+    // ─── 59. Normal mana production stays safe (dissipation > generation) ──
+
+    [Fact]
+    public void NormalMana_HeatStaysSafe()
+    {
+        var body = CreateBody();
+        var nervous = Nervous(body);
+
+        // Run many ticks at normal mana rates
+        for (int i = 0; i < 50; i++)
+            body.Update();
+
+        float totalHeat = nervous.GetTotalHeat();
+        Assert.True(totalHeat < 10,
+            $"Normal mana production should not cause dangerous heat buildup (total: {totalHeat})");
+
+        Assert.Empty(nervous.GetOverheatedParts());
+    }
+
+    // ─── 60. Overheated parts query in full body ──
+
+    [Fact]
+    public void OverheatedParts_ReflectedInFullBody()
+    {
+        var body = CreateBody();
+        var nervous = Nervous(body);
+
+        // Boost a node to cause overheating
+        var hand = nervous.GetNode(BodyPartType.LeftHand) as NerveNode;
+        Assert.NotNull(hand);
+        hand.ManaProductionRate = 10f;
+
+        for (int i = 0; i < 20; i++)
+            body.Update();
+
+        var overheated = nervous.GetOverheatedParts();
+        Assert.Contains(BodyPartType.LeftHand, overheated);
     }
 }

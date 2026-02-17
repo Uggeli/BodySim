@@ -49,6 +49,11 @@ namespace BodySim
     public readonly record struct ToxinEvent(BodyPartType BodyPartType, float Amount) : IEvent; // Poison/toxin exposure
     public readonly record struct CureEvent(BodyPartType BodyPartType, float Potency, bool CuresInfection = true, bool CuresToxin = true) : IEvent; // Medicine/antidote
 
+    // Nervous events
+    public readonly record struct NerveSeverEvent(BodyPartType BodyPartType) : IEvent; // Nerve severed
+    public readonly record struct NerveRepairEvent(BodyPartType BodyPartType) : IEvent; // Nerve repaired
+    public readonly record struct ShockEvent(float Intensity) : IEvent; // Systemic shock (affects all nerves)
+
     // Propagate Effects
     public record ImpactEffect(
         float InitialValue,

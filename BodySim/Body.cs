@@ -21,6 +21,7 @@ public class Body
         Systems[BodySystemType.Respiratory] = new RespiratorySystem(ResourcePool, EventHub);
         Systems[BodySystemType.Muscular] = new MuscularSystem(ResourcePool, EventHub);
         Systems[BodySystemType.Immune] = new ImmuneSystem(ResourcePool, EventHub);
+        Systems[BodySystemType.Nerveus] = new NervousSystem(ResourcePool, EventHub);
     }
 
     public void Update()
@@ -104,6 +105,21 @@ public class Body
     public void Cure(BodyPartType bodyPart, float potency, bool curesInfection = true, bool curesToxin = true)
     {
         EventHub.Emit(new CureEvent(bodyPart, potency, curesInfection, curesToxin));
+    }
+
+    public void SeverNerve(BodyPartType bodyPart)
+    {
+        EventHub.Emit(new NerveSeverEvent(bodyPart));
+    }
+
+    public void RepairNerve(BodyPartType bodyPart)
+    {
+        EventHub.Emit(new NerveRepairEvent(bodyPart));
+    }
+
+    public void Shock(float intensity)
+    {
+        EventHub.Emit(new ShockEvent(intensity));
     }
 
     public BodySystemBase? GetSystem(BodySystemType systemType)

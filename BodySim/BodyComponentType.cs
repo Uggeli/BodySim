@@ -14,4 +14,6 @@ public enum BodyComponentType: byte
     MuscleStrength,
     SkinIntegrity,
     ImmunePotency,
+    NerveSignal,
+    MagicalHeat,
 }
