@@ -25,6 +25,14 @@ namespace BodySim
     public readonly record struct BoneSetEvent(BodyPartType BodyPartType) : IEvent; // Reset/splint a fractured bone
     public readonly record struct ResourceStarvationEvent(BodyPartType BodyPartType, BodyResourceType ResourceType, float Deficit) : IEvent;
 
+    // Circulatory events
+    public readonly record struct BleedEvent(BodyPartType BodyPartType, float BleedRate) : IEvent;
+    public readonly record struct ClotEvent(BodyPartType BodyPartType) : IEvent;
+
+    // Respiratory events
+    public readonly record struct SuffocateEvent(BodyPartType BodyPartType) : IEvent; // Airway blocked
+    public readonly record struct ClearAirwayEvent(BodyPartType BodyPartType) : IEvent; // Airway unblocked
+
     // Propagate Effects
     public record ImpactEffect(
         float InitialValue,

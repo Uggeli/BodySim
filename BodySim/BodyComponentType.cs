@@ -8,4 +8,7 @@ public enum BodyComponentType: byte
     Mana,
     BoneDensity,
     Integrity,
+    BloodFlow,
+    LungCapacity,
+    AirFlow,
 }

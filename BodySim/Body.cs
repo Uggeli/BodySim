@@ -7,8 +7,16 @@ public class Body
     private Dictionary<BodySystemType, BodySystemBase> Systems = [];
     public Body()
     {
+        // Seed initial resource pool for a healthy body
+        ResourcePool.AddResource(BodyResourceType.Blood, 50f);
+        ResourcePool.AddResource(BodyResourceType.Oxygen, 100f);
+        ResourcePool.AddResource(BodyResourceType.Glucose, 100f);
+        ResourcePool.AddResource(BodyResourceType.Water, 100f);
+        ResourcePool.AddResource(BodyResourceType.Calcium, 50f);
+
         Systems[BodySystemType.Skeletal] = new SkeletalSystem(ResourcePool, EventHub);
         Systems[BodySystemType.Circulatory] = new CirculatorySystem(ResourcePool, EventHub);
+        Systems[BodySystemType.Respiratory] = new RespiratorySystem(ResourcePool, EventHub);
     }
 
     public void Update()
@@ -37,6 +45,16 @@ public class Body
     public void SetBone(BodyPartType bodyPart)
     {
         EventHub.Emit(new BoneSetEvent(bodyPart));
+    }
+
+    public void Bleed(BodyPartType bodyPart, float bleedRate)
+    {
+        EventHub.Emit(new BleedEvent(bodyPart, bleedRate));
+    }
+
+    public void Clot(BodyPartType bodyPart)
+    {
+        EventHub.Emit(new ClotEvent(bodyPart));
     }
 
     public BodySystemBase? GetSystem(BodySystemType systemType)
