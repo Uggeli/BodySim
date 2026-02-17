@@ -33,4 +33,14 @@ public class Body
     {
         EventHub.Emit(new PropagateEffectEvent(bodyPart, effect));
     }
+
+    public void SetBone(BodyPartType bodyPart)
+    {
+        EventHub.Emit(new BoneSetEvent(bodyPart));
+    }
+
+    public BodySystemBase? GetSystem(BodySystemType systemType)
+    {
+        return Systems.TryGetValue(systemType, out BodySystemBase? system) ? system : null;
+    }
 }

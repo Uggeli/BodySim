@@ -6,4 +6,6 @@ public enum BodyComponentType: byte
     Health,
     Stamina,
     Mana,
+    BoneDensity,
+    Integrity,
 }

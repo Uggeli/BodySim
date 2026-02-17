@@ -20,6 +20,11 @@ namespace BodySim
     public readonly record struct PainEvent(BodyPartType BodyPartType, int Pain) : IEvent;
     public readonly record struct PropagateEffectEvent(BodyPartType BodyPartType, IPropagationEffect Effect) : IEvent;
 
+    // Skeletal events
+    public readonly record struct FractureEvent(BodyPartType BodyPartType) : IEvent;
+    public readonly record struct BoneSetEvent(BodyPartType BodyPartType) : IEvent; // Reset/splint a fractured bone
+    public readonly record struct ResourceStarvationEvent(BodyPartType BodyPartType, BodyResourceType ResourceType, float Deficit) : IEvent;
+
     // Propagate Effects
     public record ImpactEffect(
         float InitialValue,
