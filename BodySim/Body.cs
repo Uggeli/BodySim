@@ -68,7 +68,7 @@ public class Body
     {
         var payload = new
         {
-            resources = ResourcePool.GetResources().ToDictionary(r => r.Key.ToString(), r => r.Value),
+            resources = ResourcePool.GetResources().ToDictionary(resource => resource.Key.ToString(), resource => resource.Value),
             systems = Systems.ToDictionary(
                 system => system.Key.ToString(),
                 system => system.Value.GetNodes().ToDictionary(
@@ -77,12 +77,12 @@ public class Body
                     {
                         status = node.Value.Status.ToString(),
                         components = node.Value.Components.ToDictionary(
-                            component => component.ComponentType.ToString(),
-                            component => new
+                            nodeComponent => nodeComponent.ComponentType.ToString(),
+                            nodeComponent => new
                             {
-                                current = component.Current,
-                                max = component.Max,
-                                regenRate = component.RegenRate,
+                                current = nodeComponent.Current,
+                                max = nodeComponent.Max,
+                                regenRate = nodeComponent.RegenRate,
                             }),
                     }))
         };

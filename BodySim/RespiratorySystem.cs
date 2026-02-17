@@ -2,6 +2,8 @@ namespace BodySim;
 
 public class RespiratorySystem : BodySystemBase
 {
+    private const float NormalAirFlow = 100f;
+
     public RespiratorySystem(BodyResourcePool pool, EventHub eventHub)
         : base(BodySystemType.Respiratory, pool, eventHub)
     {
@@ -31,18 +33,28 @@ public class RespiratorySystem : BodySystemBase
         }
     }
 
-    void SetAirwayState(BodyPartType bodyPartType, bool blocked)
+    private void SetAirwayState(BodyPartType bodyPartType, bool blocked)
     {
         if (!Statuses.TryGetValue(bodyPartType, out var node)) return;
         node.Status = blocked ? SystemNodeStatus.Disabled : SystemNodeStatus.Healthy;
-        node.GetComponent(BodyComponentType.AirFlow)!.Current = blocked ? 0 : 100;
+        var airflow = node.GetComponent(BodyComponentType.AirFlow);
+        if (airflow != null)
+        {
+            airflow.Current = blocked ? 0 : NormalAirFlow;
+        }
     }
 }
 
-public class RespiratoryNode(BodyPartType bodyPartType) : BodyPartNodeBase(bodyPartType, [
-    new BodyComponentBase(100, 100, 0.1f, BodyComponentType.Health),
-    new BodyComponentBase(100, 100, 0f, BodyComponentType.LungCapacity),
-    new BodyComponentBase(100, 100, 0f, BodyComponentType.AirFlow),
-])
+public class RespiratoryNode(BodyPartType bodyPartType) : BodyPartNodeBase(bodyPartType, CreateComponents())
 {
+    private const float DefaultComponentValue = 100f;
+    private const float HealthRegenRate = 0.1f;
+    private const float NoRegenRate = 0f;
+
+    private static List<BodyComponentBase> CreateComponents() =>
+    [
+        new BodyComponentBase(DefaultComponentValue, DefaultComponentValue, HealthRegenRate, BodyComponentType.Health),
+        new BodyComponentBase(DefaultComponentValue, DefaultComponentValue, NoRegenRate, BodyComponentType.LungCapacity),
+        new BodyComponentBase(DefaultComponentValue, DefaultComponentValue, NoRegenRate, BodyComponentType.AirFlow),
+    ];
 }
