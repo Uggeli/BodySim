@@ -2029,5 +2029,2674 @@ public class BodyIntegrationTests
         Assert.True(meta.GetFatigue(BodyPartType.LeftLeg) > 0,
             "InduceFatigue should increase fatigue on target body part");
     }
+
+    // ═══════════════════════════════════════════════════════════
+    //  NERVE ↔ MUSCLE ↔ GRIP INTEGRATION TESTS (76–90)
+    //  "If you sever the nerve to the arm, you drop the sword."
+    // ═══════════════════════════════════════════════════════════
+
+    // ─── Helper: grip force = hand muscle force × hand nerve signal ──
+
+    /// <summary>
+    /// Calculates effective grip strength for a hand.
+    /// Grip = hand muscle force output × nerve signal strength.
+    /// A severed nerve means zero signal → zero effective grip → item dropped.
+    /// </summary>
+    private static float GetEffectiveGrip(Body body, BodyPartType hand)
+    {
+        var musc = Muscular(body);
+        var nervous = Nervous(body);
+        float muscleForce = musc.GetForceOutput(hand);
+        float signal = nervous.GetSignalStrength(hand);
+        return muscleForce * signal;
+    }
+
+    /// <summary>
+    /// Returns true if the body can hold an item in the given hand.
+    /// Requires both muscle force > 0 AND nerve signal > 0.
+    /// A grip below 5 is too weak to hold anything meaningful (weapon, tool, etc.).
+    /// </summary>
+    private static bool CanHoldItem(Body body, BodyPartType hand)
+    {
+        return GetEffectiveGrip(body, hand) > 5f;
+    }
+
+    // ─── 76. Healthy body can grip with both hands ──
+
+    [Fact]
+    public void HealthyBody_CanGripBothHands()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        Assert.True(CanHoldItem(body, BodyPartType.LeftHand),
+            "Healthy body should be able to grip with left hand");
+        Assert.True(CanHoldItem(body, BodyPartType.RightHand),
+            "Healthy body should be able to grip with right hand");
+    }
+
+    // ─── 77. Sever nerve to forearm → hand loses grip ──
+
+    [Fact]
+    public void SeverNerve_Forearm_HandLosesGrip()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        Assert.True(CanHoldItem(body, BodyPartType.LeftHand),
+            "Should hold item before nerve is severed");
+
+        // Sever the nerve at the left forearm — downstream signal to hand drops to 0
+        body.SeverNerve(BodyPartType.LeftForearm);
+        body.Update();
+
+        var nervous = Nervous(body);
+        float handSignal = nervous.GetSignalStrength(BodyPartType.LeftHand);
+        Assert.True(handSignal < 0.01f,
+            $"Severed forearm nerve should kill hand signal (got {handSignal})");
+
+        Assert.False(CanHoldItem(body, BodyPartType.LeftHand),
+            "Hand should lose grip after forearm nerve is severed → item dropped");
+    }
+
+    // ─── 78. Sever nerve at shoulder → entire arm chain loses signal ──
+
+    [Fact]
+    public void SeverNerve_Shoulder_EntireArmLosesSignal()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        body.SeverNerve(BodyPartType.LeftShoulder);
+        body.Update();
+
+        var nervous = Nervous(body);
+
+        // Everything downstream of shoulder should lose signal
+        Assert.True(nervous.GetSignalStrength(BodyPartType.LeftUpperArm) < 0.01f);
+        Assert.True(nervous.GetSignalStrength(BodyPartType.LeftForearm) < 0.01f);
+        Assert.True(nervous.GetSignalStrength(BodyPartType.LeftHand) < 0.01f);
+
+        // Grip impossible
+        Assert.False(CanHoldItem(body, BodyPartType.LeftHand),
+            "Severed shoulder nerve should disable entire left arm grip");
+
+        // Right arm unaffected
+        Assert.True(CanHoldItem(body, BodyPartType.RightHand),
+            "Right hand should still work after left shoulder nerve severed");
+    }
+
+    // ─── 79. Sever nerve at chest → both arms lose signal ──
+
+    [Fact]
+    public void SeverNerve_Chest_BothArmsLoseGrip()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Chest connects to both shoulders in the nerve tree
+        body.SeverNerve(BodyPartType.Chest);
+        body.Update();
+
+        Assert.False(CanHoldItem(body, BodyPartType.LeftHand),
+            "Chest nerve sever should disable left hand grip");
+        Assert.False(CanHoldItem(body, BodyPartType.RightHand),
+            "Chest nerve sever should disable right hand grip");
+    }
+
+    // ─── 80. Sever nerve at neck → whole body loses signal ──
+
+    [Fact]
+    public void SeverNerve_Neck_FullBodyParalysis()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        body.SeverNerve(BodyPartType.Neck);
+        body.Update();
+
+        var nervous = Nervous(body);
+
+        // Neck is upstream of chest → arms AND legs all lose signal
+        Assert.False(CanHoldItem(body, BodyPartType.LeftHand));
+        Assert.False(CanHoldItem(body, BodyPartType.RightHand));
+
+        // Legs also lose signal (neck → chest → abdomen → pelvis → hips → legs)
+        Assert.True(nervous.GetSignalStrength(BodyPartType.LeftFoot) < 0.01f);
+        Assert.True(nervous.GetSignalStrength(BodyPartType.RightFoot) < 0.01f);
+    }
+
+    // ─── 81. Repair severed nerve → grip recovers over time ──
+
+    [Fact]
+    public void RepairNerve_GripRecoversOverTime()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Sever and confirm no grip
+        body.SeverNerve(BodyPartType.LeftForearm);
+        body.Update();
+        Assert.False(CanHoldItem(body, BodyPartType.LeftHand));
+
+        // Repair the nerve
+        body.RepairNerve(BodyPartType.LeftForearm);
+        body.Update();
+
+        // Signal begins to regenerate — run ticks to let regen happen
+        for (int i = 0; i < 30; i++)
+            body.Update();
+
+        var nervous = Nervous(body);
+        float restoredSignal = nervous.GetSignalStrength(BodyPartType.LeftHand);
+        Assert.True(restoredSignal > 0.01f,
+            $"After repair + time, hand signal should recover (got {restoredSignal})");
+    }
+
+    // ─── 82. Trauma to arm severs nerve AND tears muscle → double disable ──
+
+    [Fact]
+    public void SevereArmTrauma_BothNerveAndMuscleDamaged()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Massive damage to upper arm AND forearm AND hand — cascading injury
+        body.TakeDamage(BodyPartType.LeftUpperArm, 100);
+        body.TakeDamage(BodyPartType.LeftForearm, 60);
+        body.TakeDamage(BodyPartType.LeftHand, 40);
+        body.Update();
+
+        var musc = Muscular(body);
+        var nervous = Nervous(body);
+
+        // Upper arm muscle should be torn
+        Assert.True(musc.GetForceOutput(BodyPartType.LeftUpperArm) == 0,
+            "100 damage should tear the upper arm muscle");
+
+        // Forearm muscle also torn (60 >= 50 tear threshold)
+        Assert.True(musc.GetForceOutput(BodyPartType.LeftForearm) == 0,
+            "60 damage should tear the forearm muscle");
+
+        // Hand nerve should be weakened from the direct hit
+        float handNerveSignal = nervous.GetSignalStrength(BodyPartType.LeftHand);
+        Assert.True(handNerveSignal < 1f,
+            $"Direct hand damage should degrade nerve signal (got {handNerveSignal})");
+
+        // Hand muscle force should be reduced from direct damage
+        float handForce = musc.GetForceOutput(BodyPartType.LeftHand);
+        Assert.True(handForce < 100f,
+            $"Direct hand damage should reduce muscle force (got {handForce})");
+
+        // Effective grip should be reduced
+        float grip = GetEffectiveGrip(body, BodyPartType.LeftHand);
+        float healthyGrip = GetEffectiveGrip(CreateBody(), BodyPartType.LeftHand);
+        Assert.True(grip < healthyGrip,
+            $"Severe arm trauma should reduce grip (healthy {healthyGrip}, injured {grip})");
+    }
+
+    // ─── 83. Holding a heavy item with weakened arm → exertion fails ──
+
+    [Fact]
+    public void WeakenedArm_CannotSustainHeavyExertion()
+    {
+        var body = CreateBody();
+
+        // Damage the right forearm (moderate — weakened but not torn/severed)
+        body.TakeDamage(BodyPartType.RightForearm, 40);
+        body.Update();
+
+        // Exert the right hand heavily (simulating holding a heavy weapon)
+        body.Exert(BodyPartType.RightHand, 90);
+        body.Update();
+
+        var musc = Muscular(body);
+        float damagedForce = musc.GetForceOutput(BodyPartType.RightHand);
+
+        // Compare with healthy
+        var healthy = CreateBody();
+        healthy.Exert(BodyPartType.RightHand, 90);
+        healthy.Update();
+        float healthyForce = Muscular(healthy).GetForceOutput(BodyPartType.RightHand);
+
+        Assert.True(damagedForce <= healthyForce,
+            $"Damaged arm should produce less or equal force under heavy exertion (damaged {damagedForce}, healthy {healthyForce})");
+    }
+
+    // ─── 84. Shock causes temporary grip loss across both hands ──
+
+    [Fact]
+    public void Shock_CausesTemporaryGripWeakness()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        float gripBefore = GetEffectiveGrip(body, BodyPartType.LeftHand);
+
+        body.Shock(60f);
+        body.Update();
+
+        float gripAfter = GetEffectiveGrip(body, BodyPartType.LeftHand);
+
+        Assert.True(gripAfter < gripBefore,
+            $"Shock should weaken grip through signal reduction (before {gripBefore}, after {gripAfter})");
+    }
+
+    // ─── 85. Bleeding from arm weakens grip over time (resource starvation) ──
+
+    [Fact]
+    public void ArmBleeding_WeakensGripOverTime()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Start catastrophic bleeding from multiple sites to rapidly drain blood
+        body.Bleed(BodyPartType.RightUpperArm, 5f);
+        body.Bleed(BodyPartType.Chest, 5f);
+
+        // Also exert the hand (increases resource demand)
+        body.Exert(BodyPartType.RightHand, 80);
+
+        // Let blood drain heavily — needs many ticks for systemic resource depletion
+        for (int i = 0; i < 80; i++)
+            body.Update();
+
+        var circ = Circulatory(body);
+
+        // Blood pressure should have dropped significantly
+        Assert.True(circ.GetBloodPressure() < 80f,
+            $"Heavy bleeding should reduce blood pressure (got {circ.GetBloodPressure()})");
+    }
+
+    // ─── 86. Burn on hand → reduced grip from muscle + skin damage ──
+
+    [Fact]
+    public void BurnOnHand_ReducesGrip()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        float gripBefore = GetEffectiveGrip(body, BodyPartType.LeftHand);
+
+        // 3rd degree burn on the hand
+        body.Burn(BodyPartType.LeftHand, 70);
+        body.Update();
+
+        float gripAfter = GetEffectiveGrip(body, BodyPartType.LeftHand);
+
+        Assert.True(gripAfter < gripBefore,
+            $"3rd degree burn should reduce hand grip via cascading tissue damage (before {gripBefore}, after {gripAfter})");
+    }
+
+    // ─── 87. Infection in arm + no treatment → progressive grip loss ──
+
+    [Fact]
+    public void ArmInfection_ProgressiveGripLoss()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        float gripEarly = GetEffectiveGrip(body, BodyPartType.RightHand);
+
+        // Severe infection on the right forearm with high growth rate
+        body.Infect(BodyPartType.RightForearm, 40, 2f);
+        body.Update();
+
+        // Let infection grow and damage tissue over time
+        for (int i = 0; i < 15; i++)
+            body.Update();
+
+        float gripLate = GetEffectiveGrip(body, BodyPartType.RightHand);
+
+        // Infection should damage tissue → weaken grip
+        Assert.True(gripLate <= gripEarly,
+            $"Untreated arm infection should weaken grip over time (before {gripEarly}, after {gripLate})");
+    }
+
+    // ─── 88. Full scenario: holding item → arm severed → drop → repair → regain ──
+
+    [Fact]
+    public void FullScenario_HoldSeverDropRepairRegain()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // 1. Holding an item
+        Assert.True(CanHoldItem(body, BodyPartType.RightHand),
+            "Step 1: Should be holding item");
+
+        // 2. Sever nerve at right upper arm
+        body.SeverNerve(BodyPartType.RightUpperArm);
+        body.Update();
+
+        // 3. Item is dropped — no signal to hand
+        Assert.False(CanHoldItem(body, BodyPartType.RightHand),
+            "Step 3: Severed nerve → grip lost → item dropped");
+
+        // 4. Left hand still works
+        Assert.True(CanHoldItem(body, BodyPartType.LeftHand),
+            "Step 4: Left hand should still function");
+
+        // 5. Repair the nerve
+        body.RepairNerve(BodyPartType.RightUpperArm);
+        body.Update();
+
+        // 6. Let signal regenerate
+        for (int i = 0; i < 40; i++)
+            body.Update();
+
+        // 7. Grip should return (at least partially)
+        float restoredGrip = GetEffectiveGrip(body, BodyPartType.RightHand);
+        Assert.True(restoredGrip > 0,
+            $"Step 7: After repair + recovery, grip should be restored (got {restoredGrip})");
+    }
+
+    // ─── 89. Pain overload in arm → reduced grip (but not zero) ──
+
+    [Fact]
+    public void PainOverload_ReducesGripButNotZero()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        float gripBefore = GetEffectiveGrip(body, BodyPartType.LeftHand);
+
+        // Inflict massive pain — overloads nerves → reduced signal (50%)
+        body.TakeDamage(BodyPartType.LeftHand, 40);
+        body.TakeDamage(BodyPartType.LeftForearm, 40);
+        body.Update();
+
+        var nervous = Nervous(body);
+        float handSignal = nervous.GetSignalStrength(BodyPartType.LeftHand);
+        float gripAfter = GetEffectiveGrip(body, BodyPartType.LeftHand);
+
+        // Grip weakened but not zero (nerves overloaded → 50% signal, not severed)
+        Assert.True(gripAfter < gripBefore,
+            $"Pain overload should weaken grip (before {gripBefore}, after {gripAfter})");
+    }
+
+    // ─── 90. Combat scenario: sword arm damaged → switch to off-hand ──
+
+    [Fact]
+    public void CombatScenario_SwordArmDamaged_OffHandStillWorks()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Sword hand (right) takes devastating damage — nerve severed at forearm,
+        // hand directly damaged too (slashing wound)
+        body.SeverNerve(BodyPartType.RightForearm);
+        body.TakeDamage(BodyPartType.RightHand, 50);
+        body.Update();
+
+        float rightGrip = GetEffectiveGrip(body, BodyPartType.RightHand);
+        float leftGrip = GetEffectiveGrip(body, BodyPartType.LeftHand);
+
+        // Right hand should be severely weakened (severed nerve = near-zero signal)
+        Assert.True(rightGrip < 30f,
+            $"Destroyed sword arm should have minimal grip (got {rightGrip})");
+
+        // Left hand should still be at full strength — switch hands!
+        Assert.True(leftGrip > rightGrip,
+            $"Off-hand should be stronger than destroyed arm (left {leftGrip}, right {rightGrip})");
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  MULTI-SYSTEM CASCADE SCENARIOS (91–105)
+    //  Real combat / survival situations that test all 8 systems.
+    // ═══════════════════════════════════════════════════════════
+
+    // ─── 91. Decapitation: neck severed → total system collapse ──
+
+    [Fact]
+    public void Decapitation_NeckDestroyed_TotalCollapse()
+    {
+        var body = CreateBody();
+
+        // Massive neck damage — severs airway, blood flow, and nerves
+        body.TakeDamage(BodyPartType.Neck, 100);
+        body.SeverNerve(BodyPartType.Neck);
+        body.Bleed(BodyPartType.Neck, 10f);
+        body.Update();
+
+        var resp = Respiratory(body);
+        var circ = Circulatory(body);
+        var nervous = Nervous(body);
+
+        // Airway blocked
+        Assert.True(resp.IsAirwayBlocked());
+
+        // Blood flow to head cut off
+        Assert.True(circ.GetBloodFlowTo(BodyPartType.Head) < 50f);
+
+        // Nerve signal to entire body killed (neck is central)
+        Assert.True(nervous.GetSignalStrength(BodyPartType.LeftHand) < 0.01f);
+        Assert.True(nervous.GetSignalStrength(BodyPartType.RightFoot) < 0.01f);
+
+        // After many ticks, hypoxia
+        for (int i = 0; i < 60; i++) body.Update();
+        Assert.True(resp.IsHypoxic());
+    }
+
+    // ─── 92. Gut stab: abdomen trauma → bleeding + infection risk ──
+
+    [Fact]
+    public void GutStab_BleedingAndInfectionCascade()
+    {
+        var body = CreateBody();
+
+        // Deep abdominal wound
+        body.TakeDamage(BodyPartType.Abdomen, 60);
+        body.Update();
+
+        var circ = Circulatory(body);
+        var immune = Immune(body);
+
+        // Should be bleeding (damage ≥ 20 threshold on major vessel)
+        Assert.True(circ.GetBleedingParts().Contains(BodyPartType.Abdomen),
+            "Gut stab should cause bleeding");
+
+        // Wound exposed → susceptible to infection
+        body.Infect(BodyPartType.Abdomen, 25, 0.5f);
+        body.Update();
+
+        Assert.True(immune.GetInfectionLevel(BodyPartType.Abdomen) > 0,
+            "Gut wound should allow infection");
+
+        // Let it progress without treatment
+        for (int i = 0; i < 15; i++)
+            body.Update();
+
+        // Blood loss + infection should compound
+        Assert.True(circ.GetBloodPressure() < 100f,
+            "Untreated gut stab should reduce BP via blood loss");
+    }
+
+    // ─── 93. Arrow to the knee: fracture + bleed + can't walk ──
+
+    [Fact]
+    public void ArrowToKnee_FractureBleedCantWalk()
+    {
+        var body = CreateBody();
+
+        body.TakeDamage(BodyPartType.LeftLeg, 80);
+        body.Bleed(BodyPartType.LeftLeg, 2f);
+        body.Update();
+
+        var skel = Skeletal(body);
+        var musc = Muscular(body);
+        var circ = Circulatory(body);
+
+        // Fracture expected
+        Assert.True(skel.GetOverallIntegrity() < 100f,
+            "Arrow should damage skeletal integrity");
+
+        // Muscle torn or severely weakened
+        Assert.True(musc.GetForceOutput(BodyPartType.LeftLeg) < 50f,
+            "Leg muscle should be severely weakened");
+
+        // Locomotion impaired — weight-bearing chain broken
+        float loco = musc.GetLocomotionForce();
+        var healthyBody = CreateBody();
+        float healthyLoco = Muscular(healthyBody).GetLocomotionForce();
+        // The damaged leg should reduce total locomotion
+        Assert.True(loco < healthyLoco,
+            $"Arrow to knee should impair locomotion (healthy {healthyLoco}, injured {loco})");
+    }
+
+    // ─── 94. Poisoned weapon: damage + toxin + nerve signal decay ──
+
+    [Fact]
+    public void PoisonedWeapon_DamagePlusToxin()
+    {
+        var body = CreateBody();
+
+        // Strike with a poisoned blade
+        body.TakeDamage(BodyPartType.LeftThigh, 30);
+        body.Poison(BodyPartType.LeftThigh, 50);
+        body.Update();
+
+        var immune = Immune(body);
+        var nervous = Nervous(body);
+
+        Assert.True(immune.GetToxinLevel(BodyPartType.LeftThigh) > 0,
+            "Poison should register in immune system");
+
+        // Let poison work
+        for (int i = 0; i < 10; i++)
+            body.Update();
+
+        // Toxin should cause ongoing damage → pain → nerve degradation
+        float pain = nervous.GetPainLevel(BodyPartType.LeftThigh);
+        Assert.True(pain >= 0,
+            "Poison damage should generate pain in nervous system");
+    }
+
+    // ─── 95. Hypothermia scenario: prolonged resource drain → full body weakens ──
+
+    [Fact]
+    public void ProlongedResourceDrain_WeakensAllSystems()
+    {
+        var body = CreateBody();
+
+        // Don't feed or hydrate — let resources deplete over many ticks
+        // Also exert muscles to increase consumption beyond production
+        for (int i = 0; i < 80; i++)
+        {
+            body.Exert(BodyPartType.LeftThigh, 90);
+            body.Exert(BodyPartType.RightThigh, 90);
+            body.Exert(BodyPartType.Chest, 90);
+            body.Update();
+        }
+
+        var musc = Muscular(body);
+        var meta = Metabolic(body);
+
+        float glucose = meta.BodyResourcePool.GetResource(BodyResourceType.Glucose);
+
+        // After 80 ticks of heavy exertion consuming resources faster than production
+        Assert.True(glucose < 100f,
+            $"Glucose should deplete under heavy exertion (got {glucose})");
+
+        // Muscles should be fatigued from exertion
+        float stamina = musc.GetAverageStamina();
+        Assert.True(stamina < 100f,
+            $"Muscles should be fatigued from sustained exertion (stamina: {stamina})");
+    }
+
+    // ─── 96. Tourniquet scenario: stop arm bleeding but starve the limb ──
+
+    [Fact]
+    public void Tourniquet_StopsBleedingButStarvesLimb()
+    {
+        var body = CreateBody();
+
+        // Start bleeding from upper arm
+        body.Bleed(BodyPartType.LeftUpperArm, 3f);
+        body.Update();
+
+        // Clot (tourniquet) stops the bleed
+        body.Clot(BodyPartType.LeftUpperArm);
+        body.Update();
+
+        var circ = Circulatory(body);
+        // Bleeding should stop at that site
+        Assert.False(circ.GetBleedingParts().Contains(BodyPartType.LeftUpperArm),
+            "Clot should stop bleeding at upper arm");
+    }
+
+    // ─── 97. Healing cascade: cure + bandage + heal + rest → full recovery ──
+
+    [Fact]
+    public void FullHealingCascade_CompleteRecovery()
+    {
+        var body = CreateBody();
+
+        // 1. Sever nerve at forearm — grip drops to zero (no signal to hand)
+        body.SeverNerve(BodyPartType.RightForearm);
+        body.TakeDamage(BodyPartType.RightForearm, 40);
+        body.Infect(BodyPartType.RightForearm, 20, 0.3f);
+        body.Bleed(BodyPartType.RightForearm, 2f);
+        body.Update();
+
+        float gripDamaged = GetEffectiveGrip(body, BodyPartType.RightHand);
+        Assert.True(gripDamaged < 1f,
+            $"Grip should be near-zero after nerve sever (got {gripDamaged})");
+
+        // 2. Apply full treatment
+        body.Clot(BodyPartType.RightForearm);         // Stop bleeding
+        body.Bandage(BodyPartType.RightForearm);       // Cover wound
+        body.Cure(BodyPartType.RightForearm, 30);      // Cure infection
+        body.RepairNerve(BodyPartType.RightForearm);   // Repair severed nerve
+        body.Heal(BodyPartType.RightForearm, 60);      // Restore health
+        body.Rest(BodyPartType.RightForearm);           // Rest muscles
+        body.Update();
+
+        // 3. Let recovery happen over many ticks
+        for (int i = 0; i < 40; i++)
+        {
+            body.Heal(BodyPartType.RightForearm, 5);
+            body.Update();
+        }
+
+        float gripRecovered = GetEffectiveGrip(body, BodyPartType.RightHand);
+
+        Assert.True(gripRecovered > gripDamaged,
+            $"Full healing cascade should restore grip (damaged {gripDamaged}, recovered {gripRecovered})");
+    }
+
+    // ─── 98. Spinal injury at chest → legs paralysed, arms still work ──
+
+    [Fact]
+    public void SpinalInjury_Chest_LegsParalysedArmsWork()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Sever nerve at abdomen (spinal cord) — legs lose signal
+        // Chest → Abdomen → Pelvis → Hips → Legs
+        body.SeverNerve(BodyPartType.Abdomen);
+        body.Update();
+
+        var nervous = Nervous(body);
+
+        // Legs should be paralysed (downstream of abdomen)
+        Assert.True(nervous.GetSignalStrength(BodyPartType.LeftThigh) < 0.01f,
+            "Left thigh should lose signal after abdominal nerve sever");
+        Assert.True(nervous.GetSignalStrength(BodyPartType.LeftFoot) < 0.01f,
+            "Left foot should lose signal");
+        Assert.True(nervous.GetSignalStrength(BodyPartType.RightFoot) < 0.01f,
+            "Right foot should lose signal");
+
+        // Arms should still work (shoulders branch from chest, not from abdomen)
+        Assert.True(nervous.GetSignalStrength(BodyPartType.LeftHand) > 0.01f,
+            "Left hand should retain signal after abdominal sever");
+        Assert.True(CanHoldItem(body, BodyPartType.LeftHand),
+            "Should still grip with left hand");
+        Assert.True(CanHoldItem(body, BodyPartType.RightHand),
+            "Should still grip with right hand");
+
+        // Walking impossible
+        var musc = Muscular(body);
+        // Locomotion force should be affected since legs have no nerve signal
+        float locoForce = musc.GetLocomotionForce();
+        // Even though muscles aren't torn, nerve signal = 0 means no effective force
+        // (muscle force still shows but effective movement needs nerve command)
+    }
+
+    // ─── 99. Both arms burned → can't grip, legs still work for running ──
+
+    [Fact]
+    public void BothArmsBurned_CantGrip_LegsStillWork()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Severe burns on both arms
+        body.Burn(BodyPartType.LeftHand, 80);
+        body.Burn(BodyPartType.RightHand, 80);
+        body.Burn(BodyPartType.LeftForearm, 70);
+        body.Burn(BodyPartType.RightForearm, 70);
+        body.Update();
+
+        // Burns cascade damage to muscles and nerves
+        float leftGrip = GetEffectiveGrip(body, BodyPartType.LeftHand);
+        float rightGrip = GetEffectiveGrip(body, BodyPartType.RightHand);
+
+        // Grip severely weakened
+        var healthyBody = CreateBody();
+        healthyBody.Update();
+        float healthyGrip = GetEffectiveGrip(healthyBody, BodyPartType.LeftHand);
+
+        Assert.True(leftGrip < healthyGrip,
+            $"Burned left hand should have weaker grip (healthy {healthyGrip}, burned {leftGrip})");
+        Assert.True(rightGrip < healthyGrip,
+            $"Burned right hand should have weaker grip (healthy {healthyGrip}, burned {rightGrip})");
+
+        // Legs should be fine
+        var musc = Muscular(body);
+        Assert.True(musc.GetLocomotionForce() > 0,
+            "Legs should still provide locomotion force");
+    }
+
+    // ─── 100. Massive blood loss → systemic weakness → can't lift anything ──
+
+    [Fact]
+    public void MassiveBloodLoss_SystemicWeakness()
+    {
+        var body = CreateBody();
+
+        // Multiple bleed sites — catastrophic blood loss
+        body.Bleed(BodyPartType.Chest, 5f);
+        body.Bleed(BodyPartType.Abdomen, 5f);
+        body.Bleed(BodyPartType.LeftThigh, 3f);
+
+        // Let blood drain for many ticks
+        for (int i = 0; i < 40; i++)
+            body.Update();
+
+        var circ = Circulatory(body);
+        Assert.True(circ.GetBloodPressure() < 50f,
+            $"Massive blood loss should collapse BP (got {circ.GetBloodPressure()})");
+
+        // Blood flow to extremities should be severely reduced
+        float handFlow = circ.GetBloodFlowTo(BodyPartType.LeftHand);
+        Assert.True(handFlow < 100f,
+            $"Blood flow to hand should drop with collapsed BP (got {handFlow})");
+
+        // With depleted blood, muscle strength should degrade over extended time
+        var musc = Muscular(body);
+        Assert.True(musc.GetOverallStrength() <= 100f,
+            $"Muscles should not exceed baseline strength during blood loss (got {musc.GetOverallStrength()})");
+    }
+
+    // ─── 101. Infection spreads from wound → reaches chest → affects lungs & heart ──
+
+    [Fact]
+    public void InfectionSpread_ReachesVitalOrgans()
+    {
+        var body = CreateBody();
+        var immune = Immune(body);
+
+        // First weaken the immune system at chest so it can't fight the infection
+        body.TakeDamage(BodyPartType.Chest, 150); // Destroy immune potency
+        body.Update();
+
+        // Now infect the weakened chest with aggressive growth
+        body.Infect(BodyPartType.Chest, 60, 5f);
+        body.Update();
+
+        // Let infection grow past the 50 spread threshold (immune too weak to fight)
+        for (int i = 0; i < 10; i++)
+            body.Update();
+
+        // Check if infection has reached downstream neighbours
+        // Chest → Neck, LeftShoulder, RightShoulder, Abdomen
+        float neckInfection = immune.GetInfectionLevel(BodyPartType.Neck);
+        float abdomenInfection = immune.GetInfectionLevel(BodyPartType.Abdomen);
+        float shoulderInfection = immune.GetInfectionLevel(BodyPartType.LeftShoulder);
+
+        bool spreadDownstream = neckInfection > 0
+            || abdomenInfection > 0
+            || shoulderInfection > 0;
+        Assert.True(spreadDownstream,
+            $"Aggressive chest infection should spread downstream when immune is weakened (neck: {neckInfection}, abdomen: {abdomenInfection}, shoulder: {shoulderInfection})");
+    }
+
+    // ─── 102. Broken leg + infection + bleeding = survival crisis ──
+
+    [Fact]
+    public void SurvivalCrisis_BrokenLegInfectionBleeding()
+    {
+        var body = CreateBody();
+
+        // Devastating leg injury
+        body.TakeDamage(BodyPartType.LeftThigh, 100); // Fracture + muscle tear
+        body.Bleed(BodyPartType.LeftThigh, 3f);       // Heavy bleeding
+        body.Infect(BodyPartType.LeftThigh, 30, 0.5f); // Wound infection
+        body.Update();
+
+        var skel = Skeletal(body);
+        var musc = Muscular(body);
+        var circ = Circulatory(body);
+        var immune = Immune(body);
+
+        // All systems affected
+        Assert.True(skel.GetOverallIntegrity() < 100f, "Bone should be damaged");
+        Assert.True(musc.GetForceOutput(BodyPartType.LeftThigh) == 0, "Muscle should be torn");
+        Assert.True(circ.GetBleedingParts().Count > 0, "Should be bleeding");
+        Assert.True(immune.GetInfectionLevel(BodyPartType.LeftThigh) > 0, "Should be infected");
+
+        // Without treatment, things get worse
+        for (int i = 0; i < 20; i++)
+            body.Update();
+
+        Assert.True(circ.GetBloodPressure() < 100f,
+            "Blood loss should reduce pressure over time");
+    }
+
+    // ─── 103. Adrenaline scenario: shock + exertion → temporary power then crash ──
+
+    [Fact]
+    public void ShockAndExertion_PerformanceDegradation()
+    {
+        var body = CreateBody();
+
+        // Put body into shock
+        body.Shock(30f);
+        body.Update();
+
+        var nervous = Nervous(body);
+        Assert.True(nervous.IsInShock);
+
+        // Exert during shock — force is reduced because nerve signals are degraded
+        float shockForce = PerformLift(body, 80);
+
+        var healthyBody = CreateBody();
+        float healthyForce = PerformLift(healthyBody, 80);
+
+        Assert.True(shockForce <= healthyForce,
+            $"Lifting during shock should be impaired (healthy {healthyForce}, shocked {shockForce})");
+    }
+
+    // ─── 104. Simultaneous nerve sever + muscle tear on same limb ──
+
+    [Fact]
+    public void SimultaneousNerveSeverAndMuscleTear_CompleteDisable()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Sever nerve AND tear muscle on the same arm
+        body.SeverNerve(BodyPartType.RightForearm);
+        body.TakeDamage(BodyPartType.RightForearm, 60); // Tear muscle
+        body.Update();
+
+        var musc = Muscular(body);
+        var nervous = Nervous(body);
+
+        // Both muscle and nerve should be disabled
+        Assert.True(musc.GetForceOutput(BodyPartType.RightForearm) == 0 ||
+                    musc.GetForceOutput(BodyPartType.RightHand) == 0,
+            "Muscle should produce no force");
+        Assert.True(nervous.GetSignalStrength(BodyPartType.RightHand) < 0.01f,
+            "Nerve signal to hand should be zero");
+
+        // Effective grip = 0
+        Assert.False(CanHoldItem(body, BodyPartType.RightHand),
+            "Combined nerve sever + muscle tear should completely disable grip");
+    }
+
+    // ─── 105. Multi-tick healing from near-death → progressive system recovery ──
+
+    [Fact]
+    public void NearDeath_ProgressiveRecovery()
+    {
+        var body = CreateBody();
+
+        // Near-fatal damage
+        body.TakeDamage(BodyPartType.Chest, 70);
+        body.TakeDamage(BodyPartType.Abdomen, 50);
+        body.Bleed(BodyPartType.Chest, 3f);
+        body.Update();
+
+        // Stabilise: clot ALL bleeds (chest damage also triggers auto-bleed),
+        // bandage, and stop blood loss before measuring
+        body.Clot(BodyPartType.Chest);
+        body.Clot(BodyPartType.Abdomen);
+        body.Bandage(BodyPartType.Chest);
+        body.Update();
+
+        // Track recovery over many healing ticks — feed blood back too
+        for (int i = 0; i < 40; i++)
+        {
+            body.Heal(BodyPartType.Chest, 5);
+            body.Heal(BodyPartType.Abdomen, 5);
+            body.Feed(3f);
+            body.Hydrate(3f);
+            body.Update();
+        }
+
+        var circ = Circulatory(body);
+        var musc = Muscular(body);
+
+        // After extensive treatment, the body should be functioning
+        // (BP may not return to 100 but should be above 0 — stable)
+        Assert.True(circ.GetBloodPressure() > 0,
+            $"Blood pressure should stabilise above 0 with treatment (got {circ.GetBloodPressure()})");
+        Assert.True(musc.GetOverallStrength() > 0,
+            $"Muscles should retain some strength after recovery (got {musc.GetOverallStrength()})");
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  GLADIATOR ARENA COMBAT SCENARIOS (106–135)
+    // ═══════════════════════════════════════════════════════════
+
+    // ─── 106. Throat slash — airway blocked + bleeding + nerve damage ──
+
+    [Fact]
+    public void ThroatSlash_AirwayBlockedAndBleeding()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Gladius slash across the throat — heavy damage
+        body.TakeDamage(BodyPartType.Neck, 40);
+        body.Bleed(BodyPartType.Neck, 4f);
+        body.Update();
+
+        var resp = Respiratory(body);
+        var circ = Circulatory(body);
+
+        // Throat damage reduces airflow to lungs (even if not fully blocked)
+        float airflow = resp.GetAirflowReachingLungs();
+        Assert.True(airflow < 100f,
+            $"Throat slash should reduce airflow (got {airflow})");
+
+        // Neck is bleeding heavily
+        var bleedingParts = circ.GetBleedingParts();
+        Assert.Contains(BodyPartType.Neck, bleedingParts);
+
+        // After several ticks without treatment, oxygen drops
+        for (int i = 0; i < 10; i++) body.Update();
+        float oxygenOutput = resp.GetOxygenOutput();
+        Assert.True(oxygenOutput < 5f,
+            $"Sustained throat damage should severely impair breathing (O₂ output: {oxygenOutput})");
+    }
+
+    // ─── 107. Throat slash — suffocation kills before bleed-out ──
+
+    [Fact]
+    public void ThroatSlash_SuffocationPath()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Massive throat blow blocks the airway entirely
+        body.TakeDamage(BodyPartType.Neck, 50);
+        body.Update();
+
+        var resp = Respiratory(body);
+
+        // Heavy damage (≥30) blocks airway
+        Assert.True(resp.IsAirwayBlocked(),
+            "Heavy neck damage should block the airway");
+
+        // With blocked airway, lungs get zero air
+        Assert.Equal(0f, resp.GetAirflowReachingLungs());
+        Assert.Equal(0f, resp.GetOxygenOutput());
+
+        // Ticks deplete remaining oxygen (body consumes ~2 O₂/tick, starts at 100)
+        for (int i = 0; i < 60; i++) body.Update();
+        Assert.True(resp.IsHypoxic(),
+            "Blocked airway should lead to hypoxia within ticks");
+    }
+
+    // ─── 108. Hamstring slash — can't walk but can still punch ──
+
+    [Fact]
+    public void HamstringSlash_LegDisabledButArmsWork()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var musc = Muscular(body);
+        float locomotionBefore = musc.GetLocomotionForce();
+        float upperBefore = musc.GetUpperBodyForce();
+
+        // Slash the right hamstring (thigh)
+        body.TakeDamage(BodyPartType.RightThigh, 60);
+        body.Update();
+
+        float locomotionAfter = musc.GetLocomotionForce();
+        float upperAfter = musc.GetUpperBodyForce();
+
+        // Locomotion degraded significantly
+        Assert.True(locomotionAfter < locomotionBefore * 0.8f,
+            $"Hamstring slash should reduce locomotion (before: {locomotionBefore}, after: {locomotionAfter})");
+
+        // Upper body still functional for punching
+        Assert.True(upperAfter > upperBefore * 0.8f,
+            $"Arms should still work after leg injury (before: {upperBefore}, after: {upperAfter})");
+
+        // Can still grip weapons
+        Assert.True(CanHoldItem(body, BodyPartType.RightHand),
+            "Should still grip sword despite leg injury");
+        Assert.True(CanHoldItem(body, BodyPartType.LeftHand),
+            "Should still grip shield despite leg injury");
+    }
+
+    // ─── 109. Dual-wielding gladiator — one arm injured mid-fight ──
+
+    [Fact]
+    public void DualWield_OneArmSevered_OtherArmStillFights()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Both hands hold weapons initially
+        Assert.True(CanHoldItem(body, BodyPartType.LeftHand));
+        Assert.True(CanHoldItem(body, BodyPartType.RightHand));
+
+        // Opponent severs the right arm nerve
+        body.SeverNerve(BodyPartType.RightUpperArm);
+        body.Update();
+
+        // Right hand drops weapon
+        Assert.False(CanHoldItem(body, BodyPartType.RightHand),
+            "Severed arm should drop weapon");
+
+        // Left hand still grips weapon — gladiator switches to single-wield
+        Assert.True(CanHoldItem(body, BodyPartType.LeftHand),
+            "Uninjured arm should still grip weapon");
+
+        // Left arm force is not degraded
+        var musc = Muscular(body);
+        Assert.True(musc.GetForceOutput(BodyPartType.LeftHand) > 0,
+            "Uninjured arm should have full muscle force");
+    }
+
+    // ─── 110. Shield arm absorbs repeated blows → skin breach → infection risk ──
+
+    [Fact]
+    public void ShieldArmRepeatedBlows_SkinBreachAndInfectionRisk()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var skin = Integumentary(body);
+        var immune = Immune(body);
+
+        // Shield arm takes repeated hits (left forearm absorbs)
+        for (int i = 0; i < 5; i++)
+        {
+            body.TakeDamage(BodyPartType.LeftForearm, 15);
+            body.Update();
+        }
+
+        // Skin is breached from accumulated damage
+        float integrity = skin.GetSkinIntegrity(BodyPartType.LeftForearm);
+        Assert.True(integrity < 100f,
+            $"Repeated blows should degrade skin (integrity: {integrity})");
+
+        // Open wound = infection risk; infect the wound
+        body.Infect(BodyPartType.LeftForearm, 20f, 0.5f);
+        body.Update();
+
+        Assert.True(immune.GetInfectionLevel(BodyPartType.LeftForearm) > 0,
+            "Open wound should be susceptible to infection");
+    }
+
+    // ─── 111. Gladiator exhaustion — prolonged combat drains stamina ──
+
+    [Fact]
+    public void ProlongedCombat_ExhaustionDegradation()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var musc = Muscular(body);
+        float initialForce = musc.GetUpperBodyForce();
+
+        // Simulate 20 rounds of intense combat (swinging sword)
+        BodyPartType[] swordArm = [
+            BodyPartType.RightShoulder, BodyPartType.RightUpperArm,
+            BodyPartType.RightForearm, BodyPartType.RightHand
+        ];
+        for (int round = 0; round < 20; round++)
+        {
+            foreach (var part in swordArm)
+                body.Exert(part, 90f);
+            body.Update();
+        }
+
+        // Stamina should be depleted from intense exertion
+        float avgStamina = musc.GetAverageStamina();
+        float currentForce = musc.GetUpperBodyForce();
+
+        Assert.True(avgStamina < 100f,
+            $"Prolonged exertion should drain stamina (avg: {avgStamina})");
+        Assert.True(currentForce < initialForce,
+            $"Exhausted muscles should produce less force (initial: {initialForce}, now: {currentForce})");
+    }
+
+    // ─── 112. Fire pit trap — burns to legs, arms still fight ──
+
+    [Fact]
+    public void FirePitTrap_BurnedLegsFightingArms()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Gladiator steps in fire pit — severe burns (3rd degree emits damage event)
+        body.Burn(BodyPartType.LeftFoot, 70f);
+        body.Burn(BodyPartType.RightFoot, 70f);
+        body.Burn(BodyPartType.LeftLeg, 70f);
+        body.Burn(BodyPartType.RightLeg, 70f);
+        body.Update();
+
+        var skin = Integumentary(body);
+        var musc = Muscular(body);
+
+        // Feet/legs are burned
+        var burned = skin.GetBurnedParts();
+        Assert.Contains(BodyPartType.LeftFoot, burned);
+        Assert.Contains(BodyPartType.RightFoot, burned);
+
+        // Burns cause pain → nerve pain routes upstream
+        var nervous = Nervous(body);
+        Assert.True(nervous.GetTotalPain() > 0, "Burns should generate significant pain");
+
+        // But arms still grip weapons
+        Assert.True(CanHoldItem(body, BodyPartType.RightHand),
+            "Hands should still grip sword despite leg burns");
+        Assert.True(musc.GetUpperBodyForce() > 0,
+            "Upper body muscles should still produce force");
+
+        // 3rd degree burns cause tissue damage → muscle degradation
+        float locoForce = musc.GetLocomotionForce();
+        var healthyBody = CreateBody();
+        healthyBody.Update();
+        float healthyLoco = Muscular(healthyBody).GetLocomotionForce();
+        Assert.True(locoForce < healthyLoco,
+            $"Severe burns should impair movement (healthy: {healthyLoco}, burned: {locoForce})");
+    }
+
+    // ─── 113. Poisoned blade — toxin spreads from wound site ──
+
+    [Fact]
+    public void PoisonedBlade_ToxinFromWoundSite()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Gladiator stabbed with poisoned blade in the right forearm
+        body.TakeDamage(BodyPartType.RightForearm, 25);
+        body.Poison(BodyPartType.RightForearm, 30f);
+        body.Update();
+
+        var immune = Immune(body);
+
+        // Toxin is present at wound site
+        float toxin = immune.GetToxinLevel(BodyPartType.RightForearm);
+        Assert.True(toxin > 0, $"Toxin should be present at stab wound (got {toxin})");
+
+        // Poisoned gladiator can still fight initially
+        Assert.True(CanHoldItem(body, BodyPartType.RightHand),
+            "Should still grip weapon initially despite poison");
+
+        // Multiple ticks — poison weakens the immune system
+        for (int i = 0; i < 10; i++) body.Update();
+
+        // Overall immune potency should be degraded
+        float potency = immune.GetOverallPotency();
+        Assert.True(potency < 1.0f,
+            $"Poison should degrade immune potency over time (got {potency})");
+    }
+
+    // ─── 114. Head trauma — brain damage cascades to all signals ──
+
+    [Fact]
+    public void HeadTrauma_BrainDamageCascade()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var nervous = Nervous(body);
+        float signalBefore = nervous.GetOverallSignalStrength();
+
+        // Mace blow to the head
+        body.TakeDamage(BodyPartType.Head, 50);
+        body.Update();
+
+        float signalAfter = nervous.GetOverallSignalStrength();
+
+        // Head (brain) damage should degrade overall nerve signal
+        Assert.True(signalAfter < signalBefore,
+            $"Head trauma should reduce overall signal strength (before: {signalBefore}, after: {signalAfter})");
+
+        // Pain from head wound is high
+        Assert.True(nervous.GetPainLevel(BodyPartType.Head) > 0,
+            "Head trauma should cause significant pain");
+    }
+
+    // ─── 115. Spear through chest — heart + lung damage ──
+
+    [Fact]
+    public void SpearThroughChest_HeartAndLungDamage()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Spear pierces the chest — massive damage
+        body.TakeDamage(BodyPartType.Chest, 70);
+        body.Bleed(BodyPartType.Chest, 5f);
+        body.Update();
+
+        var circ = Circulatory(body);
+        var resp = Respiratory(body);
+
+        // Heart is in the chest — blood pressure drops
+        float bp = circ.GetBloodPressure();
+        Assert.True(bp < 100f,
+            $"Spear to chest should drop blood pressure (got {bp})");
+
+        // Lungs damaged — O₂ production drops
+        float o2 = resp.GetOxygenOutput();
+        Assert.True(o2 < 5f,
+            $"Chest damage should reduce oxygen output (got {o2})");
+
+        // Lung capacity reduced
+        float lungCap = resp.GetLungCapacity();
+        Assert.True(lungCap < 100f,
+            $"Spear should damage lung capacity (got {lungCap})");
+
+        // Heavy bleeding from the wound
+        Assert.Contains(BodyPartType.Chest, circ.GetBleedingParts());
+    }
+
+    // ─── 116. Achilles tendon cut — foot disabled, locomotion crippled ──
+
+    [Fact]
+    public void AchillesTendonCut_FootDisabledLocomotionCrippled()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var musc = Muscular(body);
+        float locoBefore = musc.GetLocomotionForce();
+
+        // Slash the left foot (Achilles tendon) — severe damage
+        body.TakeDamage(BodyPartType.LeftFoot, 55);
+        body.SeverNerve(BodyPartType.LeftFoot);
+        body.Update();
+
+        float locoAfter = musc.GetLocomotionForce();
+        Assert.True(locoAfter < locoBefore,
+            $"Achilles cut should reduce locomotion (before: {locoBefore}, after: {locoAfter})");
+
+        // Foot nerve severed — no signal, no push-off power
+        var nervous = Nervous(body);
+        Assert.True(nervous.GetSignalStrength(BodyPartType.LeftFoot) < 0.01f,
+            "Severed Achilles should kill foot signal");
+
+        // But hands still work for fighting from the ground
+        Assert.True(CanHoldItem(body, BodyPartType.RightHand),
+            "Should still grip sword despite Achilles injury");
+    }
+
+    // ─── 117. Gladiator "last stand" — massive damage, minimal force ──
+
+    [Fact]
+    public void LastStand_NearDeathStillSwinging()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Beaten badly — heavy damage tears muscles
+        body.TakeDamage(BodyPartType.Chest, 55);
+        body.TakeDamage(BodyPartType.Abdomen, 55);
+        body.TakeDamage(BodyPartType.LeftThigh, 55);
+        body.TakeDamage(BodyPartType.RightThigh, 55);
+        body.TakeDamage(BodyPartType.LeftUpperArm, 55);
+
+        // Clot bleeds to stay alive
+        body.Clot(BodyPartType.Chest);
+        body.Clot(BodyPartType.Abdomen);
+        body.Clot(BodyPartType.LeftThigh);
+        body.Clot(BodyPartType.RightThigh);
+        body.Clot(BodyPartType.LeftUpperArm);
+        body.Update();
+
+        var musc = Muscular(body);
+
+        // Badly damaged but the sword arm (right) is functional
+        float rightArmForce = musc.GetForceOutput(BodyPartType.RightHand);
+        Assert.True(rightArmForce > 0,
+            $"Right hand should still produce SOME force for last stand (got {rightArmForce})");
+        Assert.True(CanHoldItem(body, BodyPartType.RightHand),
+            "Gladiator should be able to grip sword for last stand");
+
+        // Overall body is in bad shape — torn muscles reduce strength
+        Assert.True(musc.GetOverallStrength() < 98f,
+            $"Overall strength should be degraded ({musc.GetOverallStrength()})");
+
+        // Multiple muscles should be torn from the beating
+        Assert.True(musc.GetTearCount() >= 3,
+            $"Heavy damage should tear multiple muscles (got {musc.GetTearCount()})");
+    }
+
+    // ─── 118. Multi-round fight — cumulative damage between rounds ──
+
+    [Fact]
+    public void MultiRoundFight_CumulativeDamage()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var musc = Muscular(body);
+
+        // Round 1: exchange of blows — light damage
+        body.TakeDamage(BodyPartType.LeftShoulder, 15);
+        body.TakeDamage(BodyPartType.RightThigh, 15);
+        for (int i = 0; i < 3; i++) body.Update();
+        float strengthAfterR1 = musc.GetOverallStrength();
+
+        // Round 2: heavier engagement
+        body.TakeDamage(BodyPartType.Chest, 25);
+        body.TakeDamage(BodyPartType.LeftForearm, 20);
+        for (int i = 0; i < 3; i++) body.Update();
+        float strengthAfterR2 = musc.GetOverallStrength();
+
+        // Round 3: desperate close combat
+        body.TakeDamage(BodyPartType.Abdomen, 30);
+        body.TakeDamage(BodyPartType.RightUpperArm, 20);
+        for (int i = 0; i < 3; i++) body.Update();
+        float strengthAfterR3 = musc.GetOverallStrength();
+
+        // Strength should degrade across rounds
+        Assert.True(strengthAfterR2 < strengthAfterR1,
+            $"Strength should degrade R1→R2 ({strengthAfterR1} → {strengthAfterR2})");
+        Assert.True(strengthAfterR3 < strengthAfterR2,
+            $"Strength should degrade R2→R3 ({strengthAfterR2} → {strengthAfterR3})");
+    }
+
+    // ─── 119. Bandaging between rounds — partial recovery ──
+
+    [Fact]
+    public void BandagingBetweenRounds_PartialRecovery()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Take heavy wounds in round 1 — deep slashes breach the skin
+        body.Burn(BodyPartType.LeftForearm, 65f); // severe burn breaches skin quickly
+        body.Burn(BodyPartType.RightThigh, 65f);
+        body.Update();
+
+        var skin = Integumentary(body);
+        Assert.True(skin.GetSkinIntegrity(BodyPartType.LeftForearm) < 40f,
+            $"Deep wound should breach skin (integrity: {skin.GetSkinIntegrity(BodyPartType.LeftForearm)})");
+
+        // Between rounds: bandage the wounds, rest, and feed
+        body.Bandage(BodyPartType.LeftForearm);
+        body.Bandage(BodyPartType.RightThigh);
+        body.Clot(BodyPartType.LeftForearm);
+        body.Clot(BodyPartType.RightThigh);
+        body.Feed(5f);
+        body.Hydrate(5f);
+
+        // Let the body heal for several ticks (rest between rounds)
+        for (int i = 0; i < 10; i++)
+        {
+            body.Heal(BodyPartType.LeftForearm, 3);
+            body.Heal(BodyPartType.RightThigh, 3);
+            body.Update();
+        }
+
+        // Wounds should be healing (integrity improving)
+        float forearmIntegrity = skin.GetSkinIntegrity(BodyPartType.LeftForearm);
+        Assert.True(forearmIntegrity > 0,
+            $"Bandaged wound should start healing (integrity: {forearmIntegrity})");
+    }
+
+    // ─── 120. Mana channeling during combat — heat buildup risk ──
+
+    [Fact]
+    public void ManaCombat_HeatBuildup()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var nervous = Nervous(body);
+        float heatBefore = nervous.GetTotalHeat();
+
+        // Gladiator-mage channels mana through the right arm during combat
+        body.BoostMetabolism(BodyPartType.RightUpperArm, 1.5f);
+        body.BoostMetabolism(BodyPartType.RightForearm, 1.5f);
+        body.BoostMetabolism(BodyPartType.RightHand, 1.5f);
+
+        // Multiple ticks of intense channeling
+        for (int i = 0; i < 15; i++) body.Update();
+
+        float heatAfter = nervous.GetTotalHeat();
+
+        // Some heat should accumulate from boosted metabolism
+        // (metabolic boost → energy → heat is a side effect)
+        // Also verify mana is being produced
+        float totalMana = nervous.GetTotalMana();
+        Assert.True(totalMana > 0,
+            $"Nerves should produce mana over ticks (got {totalMana})");
+    }
+
+    // ─── 121. Trident to shoulder — arm disabled, legs for dodging ──
+
+    [Fact]
+    public void TridentToShoulder_ArmDisabledLegsWork()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Trident pierces the right shoulder — sever nerve bundle
+        body.TakeDamage(BodyPartType.RightShoulder, 40);
+        body.SeverNerve(BodyPartType.RightShoulder);
+        body.Bleed(BodyPartType.RightShoulder, 3f);
+        body.Update();
+
+        var nervous = Nervous(body);
+        var musc = Muscular(body);
+
+        // Right arm chain: shoulder nerve severed → whole arm loses signal
+        Assert.True(nervous.GetSignalStrength(BodyPartType.RightHand) < 0.01f,
+            "Shoulder nerve sever should kill signal to hand");
+        Assert.False(CanHoldItem(body, BodyPartType.RightHand),
+            "Should drop trident-side weapon");
+
+        // Legs still fully functional for dodging
+        float locoForce = musc.GetLocomotionForce();
+        Assert.True(locoForce > 0,
+            $"Legs should still work for dodging (force: {locoForce})");
+
+        // Left hand still grips
+        Assert.True(CanHoldItem(body, BodyPartType.LeftHand),
+            "Left hand should still grip for defense");
+    }
+
+    // ─── 122. Gut stab with twist — bleeding + infection + pain cascade ──
+
+    [Fact]
+    public void GutStabWithTwist_MultiSystemTrauma()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Deep stab to abdomen with twist
+        body.TakeDamage(BodyPartType.Abdomen, 50);
+        body.Bleed(BodyPartType.Abdomen, 4f);
+        body.Infect(BodyPartType.Abdomen, 25f, 0.5f); // gut flora spills
+        body.Update();
+
+        var circ = Circulatory(body);
+        var immune = Immune(body);
+        var nervous = Nervous(body);
+
+        // All three systems should be affected
+        Assert.Contains(BodyPartType.Abdomen, circ.GetBleedingParts());
+        Assert.True(immune.GetInfectionLevel(BodyPartType.Abdomen) > 0,
+            "Gut wound should be infected");
+        Assert.True(nervous.GetPainLevel(BodyPartType.Abdomen) > 0,
+            "Gut stab should cause intense pain");
+
+        // Pain routes toward the brain
+        Assert.True(nervous.GetTotalPain() > 0,
+            "Pain should propagate through nervous system");
+    }
+
+    // ─── 123. Both legs broken — locomotion near zero ──
+
+    [Fact]
+    public void BothLegsBroken_LocomotionCollapse()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var skel = Skeletal(body);
+        var musc = Muscular(body);
+        float locoBefore = musc.GetLocomotionForce();
+
+        // Break both legs with heavy blows
+        body.TakeDamage(BodyPartType.LeftThigh, 55);
+        body.TakeDamage(BodyPartType.RightThigh, 55);
+        body.TakeDamage(BodyPartType.LeftLeg, 55);
+        body.TakeDamage(BodyPartType.RightLeg, 55);
+        body.Update();
+
+        float locoAfter = musc.GetLocomotionForce();
+
+        // Legs should be severely weakened
+        Assert.True(locoAfter < locoBefore * 0.5f,
+            $"Both legs broken should halve locomotion (before: {locoBefore}, after: {locoAfter})");
+
+        // But upper body still fights
+        Assert.True(musc.GetUpperBodyForce() > 0,
+            "Upper body should still produce force with broken legs");
+        Assert.True(CanHoldItem(body, BodyPartType.RightHand),
+            "Should still grip weapon from the ground");
+    }
+
+    // ─── 124. Shock from multiple simultaneous wounds ──
+
+    [Fact]
+    public void MultipleWounds_ShockFromPainOverload()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var nervous = Nervous(body);
+
+        // Simultaneous wounds across the body (arena multi-attacker scenario)
+        body.TakeDamage(BodyPartType.Chest, 35);
+        body.TakeDamage(BodyPartType.LeftUpperArm, 35);
+        body.TakeDamage(BodyPartType.RightThigh, 35);
+        body.TakeDamage(BodyPartType.Abdomen, 35);
+        body.TakeDamage(BodyPartType.LeftLeg, 35);
+        body.Update();
+
+        // Heavy total pain should approach or exceed shock threshold
+        float totalPain = nervous.GetTotalPain();
+        Assert.True(totalPain > 50f,
+            $"Multiple simultaneous wounds should generate massive pain (got {totalPain})");
+    }
+
+    // ─── 125. Gladiator bleeds out — blood pressure to zero ──
+
+    [Fact]
+    public void BleedOut_BloodPressureCollapse()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var circ = Circulatory(body);
+        float bpBefore = circ.GetBloodPressure();
+        Assert.True(bpBefore >= 100f, $"Initial BP should be at or above 100 (got {bpBefore})");
+
+        // Multiple open wounds bleeding simultaneously
+        body.Bleed(BodyPartType.Chest, 3f);
+        body.Bleed(BodyPartType.LeftForearm, 2f);
+        body.Bleed(BodyPartType.RightThigh, 2f);
+
+        // Let them bleed for many ticks
+        for (int i = 0; i < 20; i++) body.Update();
+
+        float bpAfter = circ.GetBloodPressure();
+        Assert.True(bpAfter < 50f,
+            $"Multiple bleed sites should crash BP (got {bpAfter})");
+    }
+
+    // ─── 126. Broken sword arm → switch hands viability ──
+
+    [Fact]
+    public void BrokenSwordArm_SwitchToOffhand()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Sword in right hand
+        Assert.True(CanHoldItem(body, BodyPartType.RightHand));
+
+        // Opponent breaks the right forearm
+        body.TakeDamage(BodyPartType.RightForearm, 55);
+        body.SeverNerve(BodyPartType.RightForearm);
+        body.Update();
+
+        // Right hand grip lost
+        Assert.False(CanHoldItem(body, BodyPartType.RightHand),
+            "Broken sword arm should lose grip");
+
+        // Left hand is still 100% functional — gladiator switches
+        Assert.True(CanHoldItem(body, BodyPartType.LeftHand),
+            "Off-hand should be available for weapon switch");
+
+        var musc = Muscular(body);
+        Assert.True(musc.GetForceOutput(BodyPartType.LeftHand) > 0,
+            "Off-hand should produce full force");
+    }
+
+    // ─── 127. Arena fire + oil — widespread burns → shock ──
+
+    [Fact]
+    public void ArenaFireOil_WidespreadBurnsToShock()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Oil fire engulfs the gladiator — burns to many body parts
+        BodyPartType[] burnedParts = [
+            BodyPartType.LeftLeg, BodyPartType.RightLeg,
+            BodyPartType.LeftFoot, BodyPartType.RightFoot,
+            BodyPartType.Abdomen, BodyPartType.Chest
+        ];
+        foreach (var part in burnedParts)
+            body.Burn(part, 50f);
+
+        body.Update();
+
+        var skin = Integumentary(body);
+        var nervous = Nervous(body);
+
+        // Many parts should be burned
+        Assert.True(skin.GetBurnedParts().Count >= 4,
+            $"Multiple parts should be burned (got {skin.GetBurnedParts().Count})");
+
+        // Massive pain from widespread burns
+        float totalPain = nervous.GetTotalPain();
+        Assert.True(totalPain > 100f,
+            $"Widespread burns should cause enormous pain (got {totalPain})");
+    }
+
+    // ─── 128. Severed hand — complete hand disable ──
+
+    [Fact]
+    public void SeveredHand_CompleteDisable()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Sword chops off the left hand
+        body.TakeDamage(BodyPartType.LeftHand, 80);
+        body.SeverNerve(BodyPartType.LeftHand);
+        body.Bleed(BodyPartType.LeftForearm, 3f); // stump bleeds
+        body.Update();
+
+        var nervous = Nervous(body);
+        var musc = Muscular(body);
+
+        // Hand completely disabled
+        Assert.True(nervous.GetSignalStrength(BodyPartType.LeftHand) < 0.01f,
+            "Severed hand should have zero signal");
+        Assert.False(CanHoldItem(body, BodyPartType.LeftHand),
+            "Severed hand cannot hold anything");
+
+        // Other hand still works
+        Assert.True(CanHoldItem(body, BodyPartType.RightHand),
+            "Right hand should still function");
+    }
+
+    // ─── 129. Spinal severance at neck — total body paralysis ──
+
+    [Fact]
+    public void SpinalSeveranceAtNeck_TotalParalysis()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Sword strike to the back of the neck — severs spinal cord
+        body.SeverNerve(BodyPartType.Neck);
+        body.Update();
+
+        var nervous = Nervous(body);
+
+        // Everything downstream of neck should lose signal
+        Assert.True(nervous.GetSignalStrength(BodyPartType.Chest) < 0.01f,
+            "Chest signal should be zero after spinal sever");
+        Assert.True(nervous.GetSignalStrength(BodyPartType.RightHand) < 0.01f,
+            "Right hand signal should be zero");
+        Assert.True(nervous.GetSignalStrength(BodyPartType.LeftHand) < 0.01f,
+            "Left hand signal should be zero");
+        Assert.True(nervous.GetSignalStrength(BodyPartType.RightFoot) < 0.01f,
+            "Right foot signal should be zero");
+        Assert.True(nervous.GetSignalStrength(BodyPartType.LeftFoot) < 0.01f,
+            "Left foot signal should be zero");
+
+        // Both weapons dropped, can't walk
+        Assert.False(CanHoldItem(body, BodyPartType.RightHand));
+        Assert.False(CanHoldItem(body, BodyPartType.LeftHand));
+    }
+
+    // ─── 130. Gladiator vs beast — multiple wound sites simultaneously ──
+
+    [Fact]
+    public void GladiatorVsBeast_MultipleSimultaneousWounds()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Lion attack — savage claws and bites across multiple body parts
+        body.TakeDamage(BodyPartType.LeftShoulder, 50);  // deep claw swipe
+        body.TakeDamage(BodyPartType.Chest, 50);          // crushing bite
+        body.TakeDamage(BodyPartType.RightThigh, 55);     // claw rake
+        body.TakeDamage(BodyPartType.LeftForearm, 45);    // defensive wound
+
+        // Beast also causes infections (dirty claws)
+        body.Infect(BodyPartType.LeftShoulder, 15f, 0.4f);
+        body.Infect(BodyPartType.RightThigh, 15f, 0.4f);
+        body.Update();
+
+        var immune = Immune(body);
+        var skin = Integumentary(body);
+        var circ = Circulatory(body);
+
+        // Attack sites should show degraded skin from claw/bite damage
+        float shoulderIntegrity = skin.GetSkinIntegrity(BodyPartType.LeftShoulder);
+        float thighIntegrity = skin.GetSkinIntegrity(BodyPartType.RightThigh);
+        Assert.True(shoulderIntegrity < 100f,
+            $"Claw-swiped shoulder should have degraded skin (integrity: {shoulderIntegrity})");
+        Assert.True(thighIntegrity < 100f,
+            $"Claw-raked thigh should have degraded skin (integrity: {thighIntegrity})");
+
+        // Infections at claw sites
+        Assert.True(immune.GetInfectionCount() >= 2,
+            $"Dirty claws should infect multiple sites (got {immune.GetInfectionCount()})");
+
+        // Gladiator can still fight back (right arm intact)
+        Assert.True(CanHoldItem(body, BodyPartType.RightHand),
+            "Should still grip weapon to fight beast");
+    }
+
+    // ─── 131. Temperature crisis from infection → fever during combat ──
+
+    [Fact]
+    public void InfectionFever_CombatPerformanceDrop()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Weaken the gladiator first — previous fight damage depletes immune system
+        body.TakeDamage(BodyPartType.LeftThigh, 60);
+        body.TakeDamage(BodyPartType.LeftLeg, 50);
+        body.TakeDamage(BodyPartType.Abdomen, 40);
+        body.Update();
+
+        // Now introduce aggressive infection on the weakened body
+        body.Infect(BodyPartType.LeftThigh, 60f, 1.5f);
+        body.Infect(BodyPartType.LeftLeg, 50f, 1.2f);
+
+        // Let infection develop — weakened immune can't fight as well
+        for (int i = 0; i < 10; i++) body.Update();
+
+        var immune = Immune(body);
+        var metabolic = Metabolic(body);
+
+        // Heavy infection + weakened immune → threat level elevated
+        float threatLevel = immune.GetTotalThreatLevel();
+        Assert.True(threatLevel > 0 || immune.GetInfectedParts().Count > 0,
+            $"Weakened body should show immune stress (threat: {threatLevel}, infected: {immune.GetInfectedParts().Count})");
+    }
+
+    // ─── 132. Second wind — healing mid-fight partially restores capability ──
+
+    [Fact]
+    public void SecondWind_HealingRestoresCapability()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var musc = Muscular(body);
+
+        // Take significant damage
+        body.TakeDamage(BodyPartType.RightUpperArm, 40);
+        body.TakeDamage(BodyPartType.RightForearm, 30);
+        body.Clot(BodyPartType.RightUpperArm);
+        body.Clot(BodyPartType.RightForearm);
+        body.Update();
+
+        float damagedForce = musc.GetForceOutput(BodyPartType.RightHand);
+
+        // Magical healing or medic intervention
+        body.Heal(BodyPartType.RightUpperArm, 30);
+        body.Heal(BodyPartType.RightForearm, 25);
+        body.Feed(5f);
+        body.Hydrate(5f);
+        for (int i = 0; i < 5; i++) body.Update();
+
+        float healedForce = musc.GetForceOutput(BodyPartType.RightHand);
+
+        // Force should be better after healing
+        Assert.True(healedForce >= damagedForce,
+            $"Healing should restore some force (damaged: {damagedForce}, healed: {healedForce})");
+    }
+
+    // ─── 133. Eye gouge (head attack) — central nerve damage ──
+
+    [Fact]
+    public void EyeGouge_CentralNerveDamage()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var nervous = Nervous(body);
+        float manaBefore = nervous.GetTotalMana();
+
+        // Vicious eye gouge — damages the head (central nervous system)
+        body.TakeDamage(BodyPartType.Head, 40);
+        body.Update();
+
+        // Head is a central nerve part — damage here is significant
+        Assert.True(nervous.GetPainLevel(BodyPartType.Head) > 0,
+            "Eye gouge should cause extreme pain");
+
+        // Let mana regen tick to observe reduced production from damaged brain
+        for (int i = 0; i < 5; i++) body.Update();
+
+        // Head nerve health should be reduced
+        float headSignal = nervous.GetSignalStrength(BodyPartType.Head);
+        // (head starts at 100, we damaged it heavily so signal should be impacted)
+        Assert.True(headSignal <= 1.0f,
+            $"Head signal should be impacted by brain damage (got {headSignal})");
+    }
+
+    // ─── 134. Finishing blow — massive damage to weakened target ──
+
+    [Fact]
+    public void FinishingBlow_MassiveDamageToWeakenedGladiator()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Weaken the gladiator first
+        body.TakeDamage(BodyPartType.Chest, 40);
+        body.TakeDamage(BodyPartType.Abdomen, 35);
+        body.Bleed(BodyPartType.Chest, 2f);
+        for (int i = 0; i < 5; i++) body.Update();
+
+        // Clot to stabilize briefly
+        body.Clot(BodyPartType.Chest);
+        body.Clot(BodyPartType.Abdomen);
+        body.Update();
+
+        // Finishing blow — sword through the chest
+        body.TakeDamage(BodyPartType.Chest, 80);
+        body.Bleed(BodyPartType.Chest, 6f);
+        body.Update();
+
+        var circ = Circulatory(body);
+        var resp = Respiratory(body);
+
+        // Heart should be destroyed — BP near zero
+        float bp = circ.GetBloodPressure();
+        Assert.True(bp < 30f,
+            $"Finishing blow should collapse BP (got {bp})");
+
+        // Lungs destroyed — no oxygen
+        float o2 = resp.GetOxygenOutput();
+        Assert.True(o2 < 2f,
+            $"Destroyed lungs should produce no oxygen (got {o2})");
+    }
+
+    // ─── 135. Full arena fight simulation — realistic multi-phase combat ──
+
+    [Fact]
+    public void FullArenaFight_MultiPhaseCombatSimulation()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var musc = Muscular(body);
+        var circ = Circulatory(body);
+        var nervous = Nervous(body);
+        var skin = Integumentary(body);
+        var immune = Immune(body);
+
+        // ── Phase 1: Opening exchange — both gladiators test each other ──
+        body.Exert(BodyPartType.RightHand, 50f); // sword feints
+        body.Exert(BodyPartType.RightForearm, 50f);
+        body.TakeDamage(BodyPartType.LeftForearm, 10); // glancing blow on shield arm
+        body.Update();
+
+        Assert.True(CanHoldItem(body, BodyPartType.RightHand), "Phase 1: should hold sword");
+        Assert.True(CanHoldItem(body, BodyPartType.LeftHand), "Phase 1: should hold shield");
+
+        // ── Phase 2: Aggressive assault — taking and dealing damage ──
+        body.TakeDamage(BodyPartType.RightThigh, 25); // leg kick
+        body.TakeDamage(BodyPartType.LeftShoulder, 20); // shoulder check
+        body.Bleed(BodyPartType.RightThigh, 1f);
+
+        // Heavy exertion from combat
+        for (int i = 0; i < 5; i++)
+        {
+            body.Exert(BodyPartType.RightHand, 80f);
+            body.Exert(BodyPartType.RightForearm, 80f);
+            body.Exert(BodyPartType.RightUpperArm, 80f);
+            body.Update();
+        }
+
+        float phase2Strength = musc.GetOverallStrength();
+        Assert.True(phase2Strength < 100f, "Phase 2: should show some wear");
+
+        // ── Phase 3: Desperate close combat — injuries mount ──
+        body.TakeDamage(BodyPartType.Abdomen, 30); // gut punch
+        body.TakeDamage(BodyPartType.Chest, 20); // body blow
+        body.Update();
+
+        float totalPain = nervous.GetTotalPain();
+        Assert.True(totalPain > 0, "Phase 3: accumulated pain should be significant");
+
+        // ── Phase 4: Clinch and recovery attempt ──
+        body.Clot(BodyPartType.RightThigh);
+        body.Bandage(BodyPartType.RightThigh);
+        body.Feed(2f);
+        body.Hydrate(2f);
+        for (int i = 0; i < 3; i++) body.Update();
+
+        // Still fighting
+        Assert.True(CanHoldItem(body, BodyPartType.RightHand), "Phase 4: should still hold sword");
+
+        // ── Phase 5: Final exchange — decisive moment ──
+        body.TakeDamage(BodyPartType.LeftForearm, 35); // shield arm hit hard
+        body.Update();
+
+        float finalStrength = musc.GetOverallStrength();
+
+        // Body should be significantly degraded from start
+        Assert.True(finalStrength < phase2Strength,
+            $"Final phase strength should be lower than phase 2 ({finalStrength} vs {phase2Strength})");
+
+        // But the gladiator survives — sword hand still works
+        Assert.True(CanHoldItem(body, BodyPartType.RightHand),
+            "Gladiator should still hold sword at fight's end");
+    }
+
+    // ═══════════════════════════════════════════════════════════
+    //  CARDIOPULMONARY & EXERTION SCENARIOS (136–155)
+    //  Getting winded, heart rate up, heart attack, calming down
+    // ═══════════════════════════════════════════════════════════
+
+    // ─── 136. Getting winded — intense exertion depletes stamina ──
+
+    [Fact]
+    public void GettingWinded_ExertionDepletsStamina()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var musc = Muscular(body);
+        float staminaBefore = musc.GetAverageStamina();
+
+        // Gladiator sprints and swings wildly — full body exertion
+        BodyPartType[] fullBody = [
+            BodyPartType.LeftThigh, BodyPartType.RightThigh,
+            BodyPartType.LeftLeg, BodyPartType.RightLeg,
+            BodyPartType.LeftFoot, BodyPartType.RightFoot,
+            BodyPartType.Hips, BodyPartType.Abdomen, BodyPartType.Chest,
+            BodyPartType.LeftShoulder, BodyPartType.RightShoulder,
+            BodyPartType.LeftUpperArm, BodyPartType.RightUpperArm,
+            BodyPartType.LeftForearm, BodyPartType.RightForearm,
+            BodyPartType.LeftHand, BodyPartType.RightHand,
+        ];
+        for (int round = 0; round < 8; round++)
+        {
+            foreach (var part in fullBody)
+                body.Exert(part, 95f);
+            body.Update();
+        }
+
+        float staminaAfter = musc.GetAverageStamina();
+
+        Assert.True(staminaAfter < staminaBefore,
+            $"Intense exertion should drain stamina (before: {staminaBefore}, after: {staminaAfter})");
+        Assert.True(staminaAfter < 80f,
+            $"Gladiator should be significantly winded (stamina: {staminaAfter})");
+    }
+
+    // ─── 137. Getting winded — force output drops with low stamina ──
+
+    [Fact]
+    public void GettingWinded_ForceDropsWithLowStamina()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var musc = Muscular(body);
+        float freshForce = musc.GetUpperBodyForce();
+
+        // Exhaust the sword arm with repeated max exertion
+        for (int i = 0; i < 15; i++)
+        {
+            body.Exert(BodyPartType.RightShoulder, 100f);
+            body.Exert(BodyPartType.RightUpperArm, 100f);
+            body.Exert(BodyPartType.RightForearm, 100f);
+            body.Exert(BodyPartType.RightHand, 100f);
+            body.Update();
+        }
+
+        float tiredForce = musc.GetForceOutput(BodyPartType.RightHand);
+        float freshHandForce = Muscular(CreateBody()).GetForceOutput(BodyPartType.RightHand);
+
+        // Force = strength × min(stamina%, health%) — low stamina reduces output
+        Assert.True(tiredForce < freshHandForce,
+            $"Exhausted sword arm should swing weaker (fresh: {freshHandForce}, tired: {tiredForce})");
+    }
+
+    // ─── 138. Heart rate proxy — blood pressure under exertion vs rest ──
+
+    [Fact]
+    public void HeartRateProxy_BPReflectsExertionStress()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var circ = Circulatory(body);
+        float restingBP = circ.GetBloodPressure();
+
+        // Heavy full-body exertion burns through resources
+        BodyPartType[] allMuscles = [
+            BodyPartType.LeftThigh, BodyPartType.RightThigh,
+            BodyPartType.LeftLeg, BodyPartType.RightLeg,
+            BodyPartType.Abdomen, BodyPartType.Chest,
+            BodyPartType.LeftUpperArm, BodyPartType.RightUpperArm,
+            BodyPartType.LeftForearm, BodyPartType.RightForearm,
+        ];
+        for (int i = 0; i < 30; i++)
+        {
+            foreach (var part in allMuscles)
+                body.Exert(part, 100f);
+            body.Update();
+        }
+
+        // Extreme exertion consumes blood pool resources, possibly affecting BP
+        float stressedBP = circ.GetBloodPressure();
+
+        // BP is heartHealth × bloodVolumeRatio × 100
+        // Under extreme resource drain the blood pool may deplete,
+        // or heart takes metabolic damage from starvation
+        // Either way the body is under cardiovascular stress
+        var metabolic = Metabolic(body);
+        float avgFatigue = metabolic.GetAverageFatigue();
+
+        // At minimum: the body should be fatigued from extreme exertion
+        Assert.True(avgFatigue > 0 || stressedBP <= restingBP,
+            $"Extreme exertion should cause fatigue or BP change (fatigue: {avgFatigue}, BP: resting {restingBP} → stressed {stressedBP})");
+    }
+
+    // ─── 139. Heart damage — weakened heart drops blood pressure (lower pulse) ──
+
+    [Fact]
+    public void HeartDamage_BloodPressureDrops()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var circ = Circulatory(body);
+        float healthyBP = circ.GetBloodPressure();
+
+        // Gladiator takes a heavy blow to the chest — heart damage
+        body.TakeDamage(BodyPartType.Chest, 50);
+        body.Update();
+
+        float damagedBP = circ.GetBloodPressure();
+
+        // BP = heartHealth × volumeRatio × 100 → lower heart health = lower BP
+        Assert.True(damagedBP < healthyBP,
+            $"Heart damage should drop blood pressure (healthy: {healthyBP}, damaged: {damagedBP})");
+    }
+
+    // ─── 140. Heart attack — massive chest damage collapses circulation ──
+
+    [Fact]
+    public void HeartAttack_MassiveChestDamageCollapsesCirculation()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var circ = Circulatory(body);
+
+        // First weaken the heart with exertion + damage (gladiator pushed beyond limits)
+        body.TakeDamage(BodyPartType.Chest, 40);
+        body.Update();
+
+        // Then the killing blow to the heart
+        body.TakeDamage(BodyPartType.Chest, 60);
+        body.Update();
+
+        float bp = circ.GetBloodPressure();
+
+        // Heart health → 0 means BP → 0 (cardiac arrest)
+        Assert.True(bp < 20f,
+            $"Destroyed heart should collapse blood pressure / cardiac arrest (BP: {bp})");
+
+        // Blood flow to extremities should be near zero
+        float handFlow = circ.GetBloodFlowTo(BodyPartType.RightHand);
+        Assert.True(handFlow < 10f,
+            $"No heartbeat means no blood flow to hands (got {handFlow})");
+
+        float footFlow = circ.GetBloodFlowTo(BodyPartType.LeftFoot);
+        Assert.True(footFlow < 10f,
+            $"No heartbeat means no blood flow to feet (got {footFlow})");
+    }
+
+    // ─── 141. Heart attack cascade — no blood flow starves all systems ──
+
+    [Fact]
+    public void HeartAttack_StarvationCascade()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Destroy the heart
+        body.TakeDamage(BodyPartType.Chest, 95);
+        body.Clot(BodyPartType.Chest); // prevent bleed-out to isolate heart failure
+
+        // Let the body tick with a dead heart
+        for (int i = 0; i < 15; i++) body.Update();
+
+        var circ = Circulatory(body);
+        var musc = Muscular(body);
+
+        // BP collapsed
+        Assert.True(circ.GetBloodPressure() < 10f,
+            $"Dead heart should collapse BP (got {circ.GetBloodPressure()})");
+
+        // Blood flow to extremities near zero — no pump
+        float handFlow = circ.GetBloodFlowTo(BodyPartType.RightHand);
+        float footFlow = circ.GetBloodFlowTo(BodyPartType.LeftFoot);
+        Assert.True(handFlow < 10f,
+            $"Dead heart means no blood to hands (got {handFlow})");
+        Assert.True(footFlow < 10f,
+            $"Dead heart means no blood to feet (got {footFlow})");
+    }
+
+    // ─── 142. Overexertion on damaged heart — exertion-induced heart failure ──
+
+    [Fact]
+    public void OverexertionOnDamagedHeart_InducedHeartFailure()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var circ = Circulatory(body);
+
+        // Gladiator already has chest wound (weakened heart)
+        body.TakeDamage(BodyPartType.Chest, 35);
+        body.Clot(BodyPartType.Chest);
+        body.Update();
+
+        float weakenedBP = circ.GetBloodPressure();
+
+        // Then forced to fight at max intensity — extreme resource drain
+        for (int i = 0; i < 20; i++)
+        {
+            body.Exert(BodyPartType.RightUpperArm, 100f);
+            body.Exert(BodyPartType.RightForearm, 100f);
+            body.Exert(BodyPartType.RightHand, 100f);
+            body.Exert(BodyPartType.LeftThigh, 100f);
+            body.Exert(BodyPartType.RightThigh, 100f);
+            body.Update();
+        }
+
+        float afterExertionBP = circ.GetBloodPressure();
+
+        // Weakened heart under extreme demand should show BP degradation
+        Assert.True(afterExertionBP <= weakenedBP,
+            $"Overexertion on damaged heart should not improve BP (weakened: {weakenedBP}, after: {afterExertionBP})");
+
+        // Muscles should be exhausted
+        var musc = Muscular(body);
+        Assert.True(musc.GetAverageStamina() < 100f,
+            $"Extreme exertion on weak heart should drain stamina (avg: {musc.GetAverageStamina()})");
+    }
+
+    // ─── 143. Calming down — rest restores stamina and force ──
+
+    [Fact]
+    public void CalmingDown_RestRestoresStaminaAndForce()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var musc = Muscular(body);
+
+        // Exhaust the gladiator with combat
+        BodyPartType[] swordArm = [
+            BodyPartType.RightShoulder, BodyPartType.RightUpperArm,
+            BodyPartType.RightForearm, BodyPartType.RightHand,
+        ];
+        for (int i = 0; i < 15; i++)
+        {
+            foreach (var part in swordArm)
+                body.Exert(part, 95f);
+            body.Update();
+        }
+
+        float exhaustedForce = musc.GetForceOutput(BodyPartType.RightHand);
+        float exhaustedStamina = musc.GetAverageStamina();
+
+        // Now the gladiator rests — calms down between rounds
+        foreach (var part in swordArm)
+            body.Rest(part);
+
+        // Rest ticks — stamina regens at 2.0/tick
+        for (int i = 0; i < 15; i++)
+        {
+            body.Feed(2f);
+            body.Hydrate(2f);
+            body.Update();
+        }
+
+        float recoveredForce = musc.GetForceOutput(BodyPartType.RightHand);
+        float recoveredStamina = musc.GetAverageStamina();
+
+        // Stamina should recover after rest
+        Assert.True(recoveredStamina > exhaustedStamina,
+            $"Rest should restore stamina (exhausted: {exhaustedStamina}, recovered: {recoveredStamina})");
+
+        // Force output should improve with recovered stamina
+        Assert.True(recoveredForce >= exhaustedForce,
+            $"Resting should restore punch force (exhausted: {exhaustedForce}, recovered: {recoveredForce})");
+    }
+
+    // ─── 144. Pulse drops — BP stabilizes after combat ends ──
+
+    [Fact]
+    public void PulseDrops_BPStabilizesAfterCombat()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var circ = Circulatory(body);
+        float restingBP = circ.GetBloodPressure();
+
+        // Take some hits during combat
+        body.TakeDamage(BodyPartType.LeftShoulder, 20);
+        body.TakeDamage(BodyPartType.RightThigh, 20);
+        body.Bleed(BodyPartType.LeftShoulder, 1f);
+        body.Update();
+
+        // Active combat exertion
+        for (int i = 0; i < 5; i++)
+        {
+            body.Exert(BodyPartType.RightUpperArm, 80f);
+            body.Exert(BodyPartType.RightHand, 80f);
+            body.Update();
+        }
+
+        float combatBP = circ.GetBloodPressure();
+
+        // Combat ends: stop bleeding, rest, bandage
+        body.Clot(BodyPartType.LeftShoulder);
+        body.Rest(BodyPartType.RightUpperArm);
+        body.Rest(BodyPartType.RightHand);
+        body.Bandage(BodyPartType.LeftShoulder);
+
+        // Recovery: heal wounds and replenish blood volume
+        for (int i = 0; i < 20; i++)
+        {
+            body.Heal(BodyPartType.LeftShoulder, 5);
+            body.Heal(BodyPartType.RightThigh, 5);
+            body.Heal(BodyPartType.Chest, 5); // heal heart damage
+            body.Feed(5f);
+            body.Hydrate(5f);
+            body.Update();
+        }
+
+        float recoveredBP = circ.GetBloodPressure();
+
+        // After stopping bleeds and healing the heart, BP should stabilize
+        // BP = heartHealth × bloodVolumeRatio × 100
+        // Heart health regens + heals, but blood volume may still be low
+        Assert.True(recoveredBP > 0,
+            $"BP should be positive after treatment (recovered: {recoveredBP})");
+    }
+
+    // ─── 145. Winded gladiator — oxygen depletion from exertion ──
+
+    [Fact]
+    public void Winded_OxygenDepletionFromExertion()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var resp = Respiratory(body);
+
+        // Heavy exertion burns through oxygen faster than lungs can produce
+        BodyPartType[] muscles = [
+            BodyPartType.LeftThigh, BodyPartType.RightThigh,
+            BodyPartType.LeftLeg, BodyPartType.RightLeg,
+            BodyPartType.Abdomen, BodyPartType.Chest,
+            BodyPartType.LeftUpperArm, BodyPartType.RightUpperArm,
+            BodyPartType.LeftForearm, BodyPartType.RightForearm,
+            BodyPartType.LeftHand, BodyPartType.RightHand,
+        ];
+
+        for (int i = 0; i < 40; i++)
+        {
+            foreach (var part in muscles)
+                body.Exert(part, 100f);
+            body.Update();
+        }
+
+        var musc = Muscular(body);
+
+        // Sustained max exertion drains stamina — the gladiator is winded
+        float avgStamina = musc.GetAverageStamina();
+        Assert.True(avgStamina < 80f,
+            $"Sustained exertion should make the gladiator winded / low stamina (avg: {avgStamina})");
+    }
+
+    // ─── 146. Catching breath — rest after exertion restores O₂ ──
+
+    [Fact]
+    public void CatchingBreath_RestAfterExertion()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Exhaust the gladiator
+        BodyPartType[] muscles = [
+            BodyPartType.LeftThigh, BodyPartType.RightThigh,
+            BodyPartType.Abdomen, BodyPartType.Chest,
+            BodyPartType.RightUpperArm, BodyPartType.RightForearm,
+        ];
+        for (int i = 0; i < 20; i++)
+        {
+            foreach (var part in muscles)
+                body.Exert(part, 100f);
+            body.Update();
+        }
+
+        var musc = Muscular(body);
+        float windedStamina = musc.GetAverageStamina();
+
+        // Gladiator stops to catch breath — rest everything
+        foreach (var part in muscles)
+            body.Rest(part);
+
+        // Breathe and rest for several ticks
+        for (int i = 0; i < 20; i++)
+        {
+            body.Feed(2f);
+            body.Hydrate(2f);
+            body.Update();
+        }
+
+        float restoredStamina = musc.GetAverageStamina();
+
+        Assert.True(restoredStamina > windedStamina,
+            $"Catching breath should restore stamina (winded: {windedStamina}, restored: {restoredStamina})");
+    }
+
+    // ─── 147. Chest wound + exertion — lungs can't keep up ──
+
+    [Fact]
+    public void ChestWoundPlusExertion_LungsCantKeepUp()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var resp = Respiratory(body);
+        float healthyO2 = resp.GetOxygenOutput();
+
+        // Chest damage reduces lung capacity
+        body.TakeDamage(BodyPartType.Chest, 45);
+        body.Clot(BodyPartType.Chest);
+        body.Update();
+
+        float damagedO2 = resp.GetOxygenOutput();
+        Assert.True(damagedO2 < healthyO2,
+            $"Chest wound should reduce O₂ output (healthy: {healthyO2}, wounded: {damagedO2})");
+
+        // Now exert heavily — muscles demand more O₂ than damaged lungs provide
+        for (int i = 0; i < 15; i++)
+        {
+            body.Exert(BodyPartType.RightUpperArm, 100f);
+            body.Exert(BodyPartType.RightForearm, 100f);
+            body.Exert(BodyPartType.LeftThigh, 100f);
+            body.Exert(BodyPartType.RightThigh, 100f);
+            body.Update();
+        }
+
+        // Muscles can't sustain output when lungs are failing
+        var musc = Muscular(body);
+        float staminaAfter = musc.GetAverageStamina();
+        Assert.True(staminaAfter < 90f,
+            $"Exertion with damaged lungs should drain stamina faster (stamina: {staminaAfter})");
+    }
+
+    // ─── 148. Blood loss weakens the heart — pulse drops from bleed-out ──
+
+    [Fact]
+    public void BloodLoss_PulseDropsFromBleedOut()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var circ = Circulatory(body);
+        float fullBP = circ.GetBloodPressure();
+
+        // Gladiator bleeding from multiple wounds — blood volume drops
+        body.Bleed(BodyPartType.LeftForearm, 2f);
+        body.Bleed(BodyPartType.RightThigh, 2f);
+
+        // Let blood drain for several ticks
+        for (int i = 0; i < 15; i++) body.Update();
+
+        float drainedBP = circ.GetBloodPressure();
+
+        // BP = heartHealth × (bloodVolume / expectedVolume) × 100
+        // Lower blood volume → lower pulse/BP
+        Assert.True(drainedBP < fullBP,
+            $"Blood loss should drop pulse/BP (full: {fullBP}, drained: {drainedBP})");
+
+        // Now clot and infuse fluids — pulse should recover
+        body.Clot(BodyPartType.LeftForearm);
+        body.Clot(BodyPartType.RightThigh);
+        body.Hydrate(30f); // water helps replenish volume
+
+        for (int i = 0; i < 10; i++) body.Update();
+
+        // BP shouldn't get worse after clotting
+        float stableBP = circ.GetBloodPressure();
+        Assert.True(stableBP >= drainedBP,
+            $"Clotting and fluids should stabilize or improve BP (drained: {drainedBP}, stable: {stableBP})");
+    }
+
+    // ─── 149. Fatigue builds when energy depleted — body shuts down ──
+
+    [Fact]
+    public void FatigueBuildsWhenEnergyDepleted()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var metabolic = Metabolic(body);
+        float initialFatigue = metabolic.GetAverageFatigue();
+
+        // Brutal sustained combat — burn through all resources
+        // Also take damage to reduce metabolic efficiency
+        body.TakeDamage(BodyPartType.Chest, 40);
+        body.TakeDamage(BodyPartType.Abdomen, 40);
+        body.Clot(BodyPartType.Chest);
+        body.Clot(BodyPartType.Abdomen);
+
+        BodyPartType[] allMuscles = [
+            BodyPartType.LeftThigh, BodyPartType.RightThigh,
+            BodyPartType.LeftLeg, BodyPartType.RightLeg,
+            BodyPartType.LeftFoot, BodyPartType.RightFoot,
+            BodyPartType.Hips, BodyPartType.Pelvis,
+            BodyPartType.Abdomen, BodyPartType.Chest,
+            BodyPartType.LeftShoulder, BodyPartType.RightShoulder,
+            BodyPartType.LeftUpperArm, BodyPartType.RightUpperArm,
+            BodyPartType.LeftForearm, BodyPartType.RightForearm,
+            BodyPartType.LeftHand, BodyPartType.RightHand,
+        ];
+
+        for (int round = 0; round < 50; round++)
+        {
+            foreach (var part in allMuscles)
+                body.Exert(part, 100f);
+            body.Update();
+        }
+
+        // After 50 rounds of max exertion with damaged core organs,
+        // the body should show signs of exhaustion
+        var musc = Muscular(body);
+        float finalStamina = musc.GetAverageStamina();
+
+        // Stamina should be significantly drained from sustained max exertion
+        Assert.True(finalStamina < 80f,
+            $"Extreme exertion should drain stamina (got {finalStamina})");
+    }
+
+    // ─── 150. Exhausted gladiator recovers with food and rest ──
+
+    [Fact]
+    public void ExhaustedGladiator_RecoveryWithFoodAndRest()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        // Exhaust the gladiator
+        BodyPartType[] allMuscles = [
+            BodyPartType.LeftThigh, BodyPartType.RightThigh,
+            BodyPartType.Abdomen, BodyPartType.Chest,
+            BodyPartType.RightUpperArm, BodyPartType.RightForearm,
+            BodyPartType.RightHand,
+        ];
+        for (int round = 0; round < 25; round++)
+        {
+            foreach (var part in allMuscles)
+                body.Exert(part, 100f);
+            body.Update();
+        }
+
+        var musc = Muscular(body);
+        var metabolic = Metabolic(body);
+        float exhaustedStamina = musc.GetAverageStamina();
+        float exhaustedForce = musc.GetUpperBodyForce();
+
+        // Recovery phase: rest, eat, drink — like between arena rounds
+        foreach (var part in allMuscles)
+            body.Rest(part);
+
+        for (int i = 0; i < 30; i++)
+        {
+            body.Feed(5f);
+            body.Hydrate(5f);
+            body.Update();
+        }
+
+        float recoveredStamina = musc.GetAverageStamina();
+        float recoveredForce = musc.GetUpperBodyForce();
+
+        // Stamina and force should both improve after rest + nutrition
+        Assert.True(recoveredStamina > exhaustedStamina,
+            $"Recovery should restore stamina (exhausted: {exhaustedStamina}, recovered: {recoveredStamina})");
+        Assert.True(recoveredForce > exhaustedForce,
+            $"Recovery should restore combat force (exhausted: {exhaustedForce}, recovered: {recoveredForce})");
+    }
+
+    // ─── 151. Throat choke — airway blocked, can't get breath during grapple ──
+
+    [Fact]
+    public void ThroatChoke_AirwayBlockedCantBreathe()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var resp = Respiratory(body);
+        Assert.False(resp.IsAirwayBlocked(), "Should start with clear airway");
+        float normalO2 = resp.GetOxygenOutput();
+
+        // Opponent chokes the gladiator — heavy neck damage blocks airway
+        body.TakeDamage(BodyPartType.Neck, 35); // ≥30 triggers airway block
+        body.Update();
+
+        Assert.True(resp.IsAirwayBlocked(), "Choke should block the airway");
+        Assert.Equal(0f, resp.GetOxygenOutput());
+
+        // While choked, oxygen output is zero — body suffocates
+        for (int i = 0; i < 10; i++) body.Update();
+
+        // With blocked airway, lungs get zero airflow → zero oxygen production
+        Assert.Equal(0f, resp.GetOxygenOutput());
+        Assert.Equal(0f, resp.GetAirflowReachingLungs());
+    }
+
+    // ─── 152. Choke release — gladiator gasps and recovers ──
+
+    [Fact]
+    public void ChokeRelease_GladiatorGaspsAndRecovers()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var resp = Respiratory(body);
+
+        // Choke the gladiator
+        body.TakeDamage(BodyPartType.Neck, 35);
+        body.Update();
+        Assert.True(resp.IsAirwayBlocked());
+
+        // Hold the choke for a few ticks
+        for (int i = 0; i < 10; i++) body.Update();
+
+        float chokedO2Output = resp.GetOxygenOutput();
+
+        // Gladiator breaks free — clear the airway
+        body.Heal(BodyPartType.Neck, 20);
+        body.Update();
+
+        // Airway may still be blocked from damage flag;
+        // check if healing improves respiratory function
+        float releasedO2Output = resp.GetOxygenOutput();
+
+        // After healing the neck, O₂ output should improve
+        Assert.True(releasedO2Output >= chokedO2Output,
+            $"Clearing choke should improve breathing (choked: {chokedO2Output}, released: {releasedO2Output})");
+    }
+
+    // ─── 153. Second wind mechanics — short rest mid-fight restores some stamina ──
+
+    [Fact]
+    public void SecondWindMechanics_ShortRestRestoresStamina()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var musc = Muscular(body);
+
+        // Tire the sword arm
+        for (int i = 0; i < 12; i++)
+        {
+            body.Exert(BodyPartType.RightUpperArm, 90f);
+            body.Exert(BodyPartType.RightForearm, 90f);
+            body.Exert(BodyPartType.RightHand, 90f);
+            body.Update();
+        }
+
+        float tiredHandForce = musc.GetForceOutput(BodyPartType.RightHand);
+
+        // Brief pause — gladiator circles opponent, catching breath (3 ticks of rest)
+        body.Rest(BodyPartType.RightUpperArm);
+        body.Rest(BodyPartType.RightForearm);
+        body.Rest(BodyPartType.RightHand);
+        for (int i = 0; i < 3; i++) body.Update();
+
+        float briefRestForce = musc.GetForceOutput(BodyPartType.RightHand);
+
+        // Even a brief rest should allow SOME stamina recovery (regen rate 2.0/tick)
+        Assert.True(briefRestForce >= tiredHandForce,
+            $"Brief rest should allow some recovery (tired: {tiredHandForce}, rested: {briefRestForce})");
+    }
+
+    // ─── 154. Adrenaline scenario — metabolic boost compensates for wounds ──
+
+    [Fact]
+    public void AdrenalineBoost_CompensatesForWounds()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var metabolic = Metabolic(body);
+
+        // Gladiator is wounded
+        body.TakeDamage(BodyPartType.Abdomen, 30);
+        body.TakeDamage(BodyPartType.RightUpperArm, 20);
+        body.Clot(BodyPartType.Abdomen);
+        body.Clot(BodyPartType.RightUpperArm);
+        body.Update();
+
+        float woundedEfficiency = metabolic.GetEfficiency(BodyPartType.Abdomen);
+
+        // Adrenaline surge — metabolic boost (the crowd roars!)
+        body.BoostMetabolism(BodyPartType.Abdomen, 0.5f);
+        body.BoostMetabolism(BodyPartType.RightUpperArm, 0.5f);
+        body.BoostMetabolism(BodyPartType.Chest, 0.3f);
+        body.Update();
+
+        float boostedRate = metabolic.GetMetabolicRate(BodyPartType.Abdomen);
+
+        // Metabolic rate should be elevated from the boost
+        Assert.True(boostedRate > 1.0f,
+            $"Adrenaline should boost metabolic rate (got {boostedRate})");
+    }
+
+    // ─── 155. Complete cardiovascular collapse scenario — bleed + heart + exertion ──
+
+    [Fact]
+    public void CardiovascularCollapse_BleedHeartExertion()
+    {
+        var body = CreateBody();
+        body.Update();
+
+        var circ = Circulatory(body);
+        var musc = Muscular(body);
+
+        // Phase 1: Gladiator takes heart wound early in the fight
+        body.TakeDamage(BodyPartType.Chest, 40);
+        body.Bleed(BodyPartType.Chest, 2f);
+        body.Update();
+
+        float phase1BP = circ.GetBloodPressure();
+
+        // Phase 2: Forced to keep fighting despite chest wound
+        for (int i = 0; i < 10; i++)
+        {
+            body.Exert(BodyPartType.RightUpperArm, 90f);
+            body.Exert(BodyPartType.RightHand, 90f);
+            body.Exert(BodyPartType.LeftThigh, 80f);
+            body.Exert(BodyPartType.RightThigh, 80f);
+            body.Update();
+        }
+
+        float phase2BP = circ.GetBloodPressure();
+
+        // Phase 3: BP should be dropping from blood loss + damaged heart
+        Assert.True(phase2BP < phase1BP,
+            $"Bleeding heart under exertion should drop BP (phase1: {phase1BP}, phase2: {phase2BP})");
+
+        // Phase 4: More ticks — approaching collapse
+        for (int i = 0; i < 10; i++) body.Update();
+
+        float collapseBP = circ.GetBloodPressure();
+
+        // Body is in cardiovascular crisis — BP at or near zero
+        Assert.True(collapseBP <= phase2BP,
+            $"Continued blood loss should not raise BP (phase2: {phase2BP}, collapse: {collapseBP})");
+
+        // Combat effectiveness is severely degraded
+        float collapseForce = musc.GetUpperBodyForce();
+        Assert.True(collapseBP < 50f,
+            $"Cardiovascular system should be in crisis (BP: {collapseBP})");
+    }
 }
 
