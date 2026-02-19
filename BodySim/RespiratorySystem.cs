@@ -17,6 +17,7 @@ public class RespiratorySystem : BodySystemBase
         eventHub.RegisterListener<SuffocateEvent>(this);
         eventHub.RegisterListener<ClearAirwayEvent>(this);
         eventHub.RegisterListener<PropagateEffectEvent>(this);
+        eventHub.RegisterListener<AmputationEvent>(this);
     }
 
     // ── Event handling ───────────────────────────────────────────
@@ -30,6 +31,7 @@ public class RespiratorySystem : BodySystemBase
             case SuffocateEvent se: HandleSuffocate(se); break;
             case ClearAirwayEvent cae: HandleClearAirway(cae); break;
             case PropagateEffectEvent pe: HandlePropagateEffect(pe); break;
+            case AmputationEvent ae: RemoveNode(ae.BodyPartType); break;
         }
     }
 

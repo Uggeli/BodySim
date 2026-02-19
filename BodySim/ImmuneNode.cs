@@ -48,10 +48,11 @@ public class ImmuneNode : BodyPartNodeBase, IResourceNeedComponent
     /// <summary>Whether this node has a lymph node (major immune hub — fights harder).</summary>
     public bool HasLymphNode { get; init; }
 
-    public ImmuneNode(BodyPartType bodyPartType, bool hasLymphNode = false)
+    public ImmuneNode(BodyPartType bodyPartType, bool hasLymphNode = false,
+        float immunePotencyMax = 100f)
         : base(bodyPartType, [
             new BodyComponentBase(100, 100, 0.3f, BodyComponentType.Health),
-            new BodyComponentBase(100, 100, 0.4f, BodyComponentType.ImmunePotency),
+            new BodyComponentBase(immunePotencyMax, immunePotencyMax, 0.4f, BodyComponentType.ImmunePotency),
         ])
     {
         HasLymphNode = hasLymphNode;

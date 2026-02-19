@@ -22,11 +22,12 @@ public class MuscleNode : BodyPartNodeBase, IResourceNeedComponent
     /// <summary>Base glucose need — scales with exertion.</summary>
     public float BaseGlucoseNeed { get; init; }
 
-    public MuscleNode(BodyPartType bodyPartType, bool isMajorGroup = false, bool isWeightBearing = false)
+    public MuscleNode(BodyPartType bodyPartType, bool isMajorGroup = false, bool isWeightBearing = false,
+        float muscleStrengthMax = 100f, float staminaMax = 100f)
         : base(bodyPartType, [
             new BodyComponentBase(100, 100, 0.3f, BodyComponentType.Health),
-            new BodyComponentBase(100, 100, 0.5f, BodyComponentType.MuscleStrength),
-            new BodyComponentBase(100, 100, 2f, BodyComponentType.Stamina),  // Stamina regens naturally
+            new BodyComponentBase(muscleStrengthMax, muscleStrengthMax, 0.5f, BodyComponentType.MuscleStrength),
+            new BodyComponentBase(staminaMax, staminaMax, 2f, BodyComponentType.Stamina),  // Stamina regens naturally
         ])
     {
         IsMajorGroup = isMajorGroup;
@@ -80,8 +81,10 @@ public class MuscleNode : BodyPartNodeBase, IResourceNeedComponent
 
         // Force = strength × min(stamina%, health%)
         // A muscle with 100 strength but 50% stamina outputs 50 force
-        float staminaFactor = stamina / 100f;
-        float healthFactor = health / 100f;
+        float staminaMax = GetComponent(BodyComponentType.Stamina)?.Max ?? 100f;
+        float healthMax = GetComponent(BodyComponentType.Health)?.Max ?? 100f;
+        float staminaFactor = staminaMax > 0 ? stamina / staminaMax : 0;
+        float healthFactor = healthMax > 0 ? health / healthMax : 0;
 
         return strength * Math.Min(staminaFactor, healthFactor);
     }

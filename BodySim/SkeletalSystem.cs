@@ -26,14 +26,19 @@ public class SkeletalSystem : BodySystemBase
     /// <summary>Starvation threshold — unmet resource needs above this trigger starvation flags.</summary>
     public float StarvationThreshold { get; set; } = 1f;
 
-    public SkeletalSystem(BodyResourcePool pool, EventHub eventHub) : base(BodySystemType.Skeletal, pool, eventHub)
+    private readonly BodyBlueprint? _blueprint;
+
+    public SkeletalSystem(BodyResourcePool pool, EventHub eventHub, BodyBlueprint? blueprint = null)
+        : base(BodySystemType.Skeletal, pool, eventHub)
     {
+        _blueprint = blueprint;
         InitSystem();
         eventHub.RegisterListener<DamageEvent>(this);
         eventHub.RegisterListener<HealEvent>(this);
         eventHub.RegisterListener<PropagateEffectEvent>(this);
         eventHub.RegisterListener<FractureEvent>(this);
         eventHub.RegisterListener<BoneSetEvent>(this);
+        eventHub.RegisterListener<AmputationEvent>(this);
     }
 
     public override void HandleMessage(IEvent evt)
@@ -54,6 +59,9 @@ public class SkeletalSystem : BodySystemBase
                 break;
             case BoneSetEvent boneSetEvent:
                 HandleBoneSet(boneSetEvent.BodyPartType);
+                break;
+            case AmputationEvent ae:
+                RemoveNode(ae.BodyPartType);
                 break;
             default:
                 break;
@@ -221,7 +229,9 @@ public class SkeletalSystem : BodySystemBase
         {
             bool weightBearing = WeightBearingParts.Contains(partType);
             bool hasMarrow = MarrowParts.Contains(partType);
-            Statuses[partType] = new BoneNode(partType, weightBearing, hasMarrow);
+            Statuses[partType] = new BoneNode(partType, weightBearing, hasMarrow,
+                _blueprint?.BoneDensityInitial ?? 100f,
+                _blueprint?.BoneIntegrityInitial ?? 100f);
         }
     }
 
@@ -300,6 +310,22 @@ public class SkeletalSystem : BodySystemBase
             .Where(kvp => kvp.Value is BoneNode bn && bn.IsFractured)
             .Select(kvp => kvp.Key)
             .ToList();
+    }
+
+    /// <summary>Gets the bone integrity factor (0–1) for a specific body part.
+    /// Fractured = 0, full integrity = 1, degraded = proportional.</summary>
+    public float GetBoneIntegrityFactor(BodyPartType bodyPartType)
+    {
+        if (Statuses.TryGetValue(bodyPartType, out var node) && node is BoneNode bone)
+        {
+            if (bone.IsFractured) return 0f;
+
+            var integrity = bone.GetComponent(BodyComponentType.Integrity);
+            if (integrity == null) return 1f;
+            return integrity.Max > 0 ? integrity.Current / integrity.Max : 1f;
+        }
+        // Body part has no bone node — treat as fully intact
+        return 1f;
     }
 
     /// <summary>Gets the overall skeletal integrity as a percentage.</summary>

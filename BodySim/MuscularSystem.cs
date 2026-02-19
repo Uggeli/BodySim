@@ -44,9 +44,12 @@ public class MuscularSystem : BodySystemBase
         BodyPartType.LeftFoot, BodyPartType.RightFoot,
     ];
 
-    public MuscularSystem(BodyResourcePool pool, EventHub eventHub)
+    private readonly BodyBlueprint? _blueprint;
+
+    public MuscularSystem(BodyResourcePool pool, EventHub eventHub, BodyBlueprint? blueprint = null)
         : base(BodySystemType.Muscular, pool, eventHub)
     {
+        _blueprint = blueprint;
         InitSystem();
         eventHub.RegisterListener<DamageEvent>(this);
         eventHub.RegisterListener<HealEvent>(this);
@@ -57,6 +60,7 @@ public class MuscularSystem : BodySystemBase
         eventHub.RegisterListener<FractureEvent>(this);
         eventHub.RegisterListener<BoneSetEvent>(this);
         eventHub.RegisterListener<PropagateEffectEvent>(this);
+        eventHub.RegisterListener<AmputationEvent>(this);
     }
 
     // ── Event handling ─────────────────────────────────────────────
@@ -74,6 +78,7 @@ public class MuscularSystem : BodySystemBase
             case FractureEvent fe: HandleFracture(fe); break;
             case BoneSetEvent bse: HandleBoneSet(bse); break;
             case PropagateEffectEvent pe: HandlePropagateEffect(pe); break;
+            case AmputationEvent ae: HandleAmputation(ae); break;
         }
     }
 
@@ -211,6 +216,17 @@ public class MuscularSystem : BodySystemBase
         });
     }
 
+    void HandleAmputation(AmputationEvent evt)
+    {
+        RemoveNode(evt.BodyPartType);
+    }
+
+    /// <summary>Gets the direct downstream parts from a body part (exposes the connection graph).</summary>
+    public List<BodyPartType> GetDownstreamParts(BodyPartType part)
+    {
+        return Connections.TryGetValue(part, out var children) ? children : [];
+    }
+
     // ── Downstream propagation ─────────────────────────────────────
 
     void DisableDownstreamNodes(BodyPartType startNode)
@@ -278,7 +294,9 @@ public class MuscularSystem : BodySystemBase
         {
             bool isMajor = MajorMuscleGroups.Contains(partType);
             bool isWeightBearing = WeightBearingMuscles.Contains(partType);
-            Statuses[partType] = new MuscleNode(partType, isMajor, isWeightBearing);
+            Statuses[partType] = new MuscleNode(partType, isMajor, isWeightBearing,
+                _blueprint?.MuscleStrengthInitial ?? 100f,
+                _blueprint?.StaminaInitial ?? 100f);
         }
     }
 
@@ -452,6 +470,175 @@ public class MuscularSystem : BodySystemBase
                 total += muscle.GetForceOutput();
         }
         return total;
+    }
+
+    // ── Kinetic chain queries ──────────────────────────────────────
+
+    /// <summary>Weight threshold factor — how much raw force is needed per kg of load.</summary>
+    private const float LoadWeightThreshold = 10f;
+
+    /// <summary>Base stamina cost per body part in a kinetic chain exertion.</summary>
+    private const float BaseChainStaminaCost = 5f;
+
+    /// <summary>Pain threshold — total chain pain above this blocks the chain entirely.</summary>
+    private const float PainBlockThreshold = 150f;
+
+    /// <summary>Maximum momentum bonus when the body handles a heavy load easily.</summary>
+    private const float MaxMomentumBonus = 0.3f;
+
+    /// <summary>
+    /// Calculates the total force a kinetic chain of body parts can generate,
+    /// factoring in muscle force, nerve signal, bone integrity, and external load.
+    /// A fractured bone or excessive pain in the chain blocks it entirely.
+    /// </summary>
+    public KineticChainResult GetKineticChainForce(BodyPartType[] chain, float loadWeight = 0f)
+    {
+        var nervous = GetSiblingSystem<NervousSystem>(BodySystemType.Nerveus);
+        var skeletal = GetSiblingSystem<SkeletalSystem>(BodySystemType.Skeletal);
+
+        // ── Missing part check: amputated body part blocks the chain ──
+        foreach (var part in chain)
+        {
+            if (GetNode(part) == null)
+            {
+                float painLevel = nervous?.GetChainPainLevel(chain) ?? 0f;
+                return new KineticChainResult
+                {
+                    Force = 0f,
+                    RawMuscleForce = 0f,
+                    StaminaCost = 0f,
+                    LoadRatio = 0f,
+                    LimitingParts = [part],
+                    IsBlocked = true,
+                    BlockedReason = $"Missing: {part}",
+                    ChainPainLevel = painLevel,
+                };
+            }
+        }
+
+        // ── Fracture check: any fractured bone in the chain blocks it ──
+        if (skeletal != null)
+        {
+            var fracturedParts = skeletal.GetFracturedParts();
+            foreach (var part in chain)
+            {
+                if (fracturedParts.Contains(part))
+                {
+                    float painLevel = nervous?.GetChainPainLevel(chain) ?? 0f;
+                    return new KineticChainResult
+                    {
+                        Force = 0f,
+                        RawMuscleForce = 0f,
+                        StaminaCost = 0f,
+                        LoadRatio = 0f,
+                        LimitingParts = [part],
+                        IsBlocked = true,
+                        BlockedReason = $"Fractured: {part}",
+                        ChainPainLevel = painLevel,
+                    };
+                }
+            }
+        }
+
+        // ── Pain check: total pain across chain parts blocks voluntary movement ──
+        float chainPain = nervous?.GetChainPainLevel(chain) ?? 0f;
+        if (chainPain >= PainBlockThreshold)
+        {
+            // Find the highest-pain part as the limiting part
+            BodyPartType worstPart = chain[0];
+            float worstPain = 0f;
+            foreach (var part in chain)
+            {
+                float p = nervous?.GetPainLevel(part) ?? 0f;
+                if (p > worstPain) { worstPain = p; worstPart = part; }
+            }
+
+            return new KineticChainResult
+            {
+                Force = 0f,
+                RawMuscleForce = 0f,
+                StaminaCost = 0f,
+                LoadRatio = 0f,
+                LimitingParts = [worstPart],
+                IsBlocked = true,
+                BlockedReason = "Pain too great",
+                ChainPainLevel = chainPain,
+            };
+        }
+
+        // ── Normal force calculation ──
+        float totalEffectiveForce = 0f;
+        float lowestForce = float.MaxValue;
+        var limitingParts = new List<BodyPartType>();
+
+        foreach (var part in chain)
+        {
+            float muscleForce = GetForceOutput(part);
+            float nerveSignal = nervous?.GetSignalStrength(part) ?? 1f;
+            float boneIntegrity = skeletal?.GetBoneIntegrityFactor(part) ?? 1f;
+
+            float effectiveForce = muscleForce * nerveSignal * boneIntegrity;
+
+            totalEffectiveForce += effectiveForce;
+
+            if (effectiveForce < lowestForce)
+            {
+                lowestForce = effectiveForce;
+                limitingParts = [part];
+            }
+            else if (Math.Abs(effectiveForce - lowestForce) < 0.01f)
+            {
+                limitingParts.Add(part);
+            }
+        }
+
+        // Load adjustment
+        float loadRatio;
+        float finalForce;
+        if (loadWeight <= 0f)
+        {
+            loadRatio = 1f;
+            finalForce = totalEffectiveForce;
+        }
+        else
+        {
+            loadRatio = totalEffectiveForce / (loadWeight * LoadWeightThreshold);
+            if (loadRatio >= 1f)
+            {
+                // Body handles the weight — heavy load adds momentum bonus
+                float bonus = Math.Min((loadRatio - 1f) * 0.5f, MaxMomentumBonus);
+                finalForce = totalEffectiveForce * (1f + bonus);
+            }
+            else
+            {
+                // Weapon is too heavy — force is penalized proportionally
+                finalForce = totalEffectiveForce * loadRatio;
+            }
+        }
+
+        float staminaCost = BaseChainStaminaCost * chain.Length * (1f + loadWeight * 0.1f);
+
+        return new KineticChainResult
+        {
+            Force = finalForce,
+            RawMuscleForce = totalEffectiveForce,
+            StaminaCost = staminaCost,
+            LoadRatio = loadRatio,
+            LimitingParts = limitingParts,
+            ChainPainLevel = chainPain,
+        };
+    }
+
+    /// <summary>
+    /// Applies the stamina/resource cost of a kinetic chain movement.
+    /// Call this after the game layer resolves a hit.
+    /// </summary>
+    public void ExertKineticChain(BodyPartType[] chain, float intensity)
+    {
+        foreach (var part in chain)
+        {
+            EventHub.Emit(new ExertEvent(part, intensity));
+        }
     }
 
     /// <summary>Gets the count of currently torn muscles.</summary>

@@ -34,9 +34,12 @@ public class NervousSystem : BodySystemBase, IListener
         BodyPartType.Hips,
     ];
 
-    public NervousSystem(BodyResourcePool pool, EventHub eventHub)
+    private readonly BodyBlueprint? _blueprint;
+
+    public NervousSystem(BodyResourcePool pool, EventHub eventHub, BodyBlueprint? blueprint = null)
         : base(BodySystemType.Nerveus, pool, eventHub)
     {
+        _blueprint = blueprint;
         InitSystem();
         eventHub.RegisterListener<PainEvent>(this);
         eventHub.RegisterListener<DamageEvent>(this);
@@ -45,6 +48,7 @@ public class NervousSystem : BodySystemBase, IListener
         eventHub.RegisterListener<NerveRepairEvent>(this);
         eventHub.RegisterListener<ShockEvent>(this);
         eventHub.RegisterListener<PropagateEffectEvent>(this);
+        eventHub.RegisterListener<AmputationEvent>(this);
     }
 
     // ── Priority message handling ──────────────────────────────────
@@ -76,6 +80,7 @@ public class NervousSystem : BodySystemBase, IListener
             case NerveRepairEvent re:       HandleRepair(re); break;
             case ShockEvent she:            HandleShock(she); break;
             case PropagateEffectEvent ppe:  HandlePropagateEffect(ppe); break;
+            case AmputationEvent ae:        RemoveNode(ae.BodyPartType); break;
         }
     }
 
@@ -307,7 +312,9 @@ public class NervousSystem : BodySystemBase, IListener
         {
             bool isCentral = CentralParts.Contains(partType);
             bool isMajor = MajorHubParts.Contains(partType);
-            Statuses[partType] = new NerveNode(partType, isCentral, isMajor);
+            Statuses[partType] = new NerveNode(partType, isCentral, isMajor,
+                _blueprint?.NerveSignalInitial ?? 100f,
+                _blueprint?.PainToleranceInitial ?? 80f);
         }
     }
 
@@ -483,6 +490,15 @@ public class NervousSystem : BodySystemBase, IListener
         return Statuses.Values
             .OfType<NerveNode>()
             .Sum(n => n.PainLevel);
+    }
+
+    /// <summary>Gets the total pain across specific body parts (for kinetic chain queries).</summary>
+    public float GetChainPainLevel(BodyPartType[] parts)
+    {
+        float total = 0;
+        foreach (var part in parts)
+            total += GetPainLevel(part);
+        return total;
     }
 
     /// <summary>Gets the number of severed nerves.</summary>

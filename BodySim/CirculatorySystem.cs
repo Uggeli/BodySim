@@ -29,6 +29,7 @@ public class CirculatorySystem : BodySystemBase
         eventHub.RegisterListener<BleedEvent>(this);
         eventHub.RegisterListener<ClotEvent>(this);
         eventHub.RegisterListener<PropagateEffectEvent>(this);
+        eventHub.RegisterListener<AmputationEvent>(this);
     }
 
     // ── Event handling ─────────────────────────────────────────────
@@ -42,6 +43,7 @@ public class CirculatorySystem : BodySystemBase
             case BleedEvent be: HandleBleed(be); break;
             case ClotEvent ce: HandleClot(ce); break;
             case PropagateEffectEvent pe: HandlePropagateEffect(pe); break;
+            case AmputationEvent ae: RemoveNode(ae.BodyPartType); break;
         }
     }
 

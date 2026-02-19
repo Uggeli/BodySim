@@ -24,6 +24,21 @@ management between fights, and minimal political layer. Solo dev.
 | Modding | Data-driven from start. Spells, equipment, traits, arenas defined in JSON data files. |
 | AI | Simple FSM for MVP. Nothing fancy. |
 | Save mode | Ironman by default (single auto-save, no manual saves). Save scumming via backup copies acts as natural easy mode. No difficulty settings. |
+| Power fantasy | Gladiators must get meaningfully stronger over time. Training builds muscle, bone density, nerve conductivity, pain tolerance. Veterans should obliterate rookies. The management payoff is visible dominance. |
+| Magic power | Magic is powerful. A fully committed high-level weave can end a fight or cripple half a team. The risk (heat, snap, self-destruction) is the balancing factor, not low damage. Melee = consistent DPS, magic = all-in burst with catastrophic downside. |
+| AI mages | Dumb for MVP. Scripted patterns per mage ("always releases at level 2", "greedy, goes for level 3+, sometimes explodes"). No real weave decision-making. |
+| Info in combat | Player can inspect any gladiator on their turn to see body diagram with injury states. Reading your opponent is a player skill, not hidden information. Visual-first, detail-on-demand. |
+| Body targeting | Default attack lets BodySim + weapon determine hit location. Precision targeting is an optional action costing extra AP or requiring skill check. Keeps turns fast, surgical strikes are special. |
+| Match throwing | Unhappy gladiators fight badly (lazy, miss openings), never deliberately lose. Multiple escalating warnings before anything irreversible. No "oops your champion is dead because you ran out of wine." |
+| The Rust | Grace period for injured gladiators. Rust only hits healthy fighters who aren't being used. Pushes roster rotation, doesn't punish healing. |
+| Needs scaling | Legend-tier income should comfortably cover legend-tier needs. Scaling feels like rewarding champions, not being extorted. Net positive investment. |
+| Crowd boredom | Crowd rewards escalation via arena tiers, not punishment for repetition. Higher tier arenas expect more spectacle. Tier 1 crowd is happy with basics. |
+| Gear as playstyle | Equipment + physical stats determine combat identity. No class system. Strong guy + heavy armor + greataxe = tank. Fast guy + leather + daggers = flanker. Weight/stamina cost makes it a real tradeoff. |
+| Management core | Match scheduling drives management. Upcoming matches announced with details (format, reward, opponent). Player preps candidates. Also: training, equipment, hiring, espionage, commissions. Random events are spice, not the main course. |
+| World map | City/world map for spatial interaction. Order supplies from merchants, commission gear from blacksmiths, watch deliveries arrive. Enables sabotage (intercept rival's shipments). Gives the game a sense of place. |
+| Scars | Mostly cosmetic. Visual storytelling. Not a significant gameplay modifier. |
+| Defensive combat | Guard, dodge, riposte, shove/bash. Defense is as important as offense. Shield fighters are walls, light fighters dodge, skilled fighters counter. |
+| Combat identity | Weapon type drives tactical identity via reach, speed, and available actions - not a class system. Spear = reach + zone control, dual wield = fast + flanking, net = entangle + control, shield = guard + bash. |
 
 ## Tech Stack
 - **Engine**: Godot 4 (C#)
@@ -107,8 +122,9 @@ Gladiators visually react to injuries. No HP bars.
   - Transitions based on health, distance, team situation
 
 ### Melee Resolution
-- [ ] Attack action: choose target body part (high / mid / low zones)
-- [ ] Hit resolution: attacker weapon skill vs defender skill -> hit location
+- [ ] Default attack: weapon type + skill determines hit location probabilistically (fast turns)
+- [ ] Precision strike: optional, costs extra AP or skill check. Target specific body part.
+- [ ] Hit resolution: attacker weapon skill vs defender skill -> hit location + severity
 - [ ] Damage routed through BodySim:
   - Integumentary absorbs first (skin + armor from equipment)
   - Skeletal: fractures, structural failure
@@ -116,7 +132,22 @@ Gladiators visually react to injuries. No HP bars.
   - Circulatory: bleeding, blood pressure drop
   - Nervous: pain generation, shock accumulation
 - [ ] Limb disabling: fractured leg = can't move, damaged arm = can't attack with it
-- [ ] Equipment matters: weapon type determines damage profile, armor protects specific body parts
+- [ ] Equipment weight system: heavy gear drains stamina faster, movement penalty. Strong gladiators handle it, nimble ones suffer.
+
+### Defensive Actions
+- [ ] Guard/Block: reduce incoming damage, costs action. Shields make this much better.
+- [ ] Dodge: chance to avoid entirely, better for light/unarmored fighters. Requires stamina.
+- [ ] Riposte/Counter: defensive stance that punishes next attacker. High skill requirement.
+- [ ] Shove/Bash: push enemy back 1 tile, break engagement, disrupt weaving. Shields excel.
+- [ ] Intercept: reaction - guardian steps into attack aimed at adjacent ally (protect the mage mechanic).
+
+### Weapon Identity (no classes - gear defines tactics)
+- [ ] Sword & shield: guard, bash, steady. The anchor. Medium damage, high defense.
+- [ ] Two-handed (axe/hammer): cleave (hit adjacent targets), slow, devastating. The threat.
+- [ ] Spear/trident: reach 2 tiles, zone control, keep-away. The controller.
+- [ ] Dual wield / dagger: multiple attacks per turn, flanking bonus, fast. The assassin.
+- [ ] Net & trident: entangle (immobilize), pull, unique gladiator fantasy.
+- [ ] Each weapon type has different available actions, not just different damage numbers.
 
 ### Yield & Death
 - [ ] Yield conditions (auto): pain threshold exceeded, can't stand, unconscious (blood pressure)
@@ -135,6 +166,7 @@ Gladiators visually react to injuries. No HP bars.
   - Status icons on hover only (bleeding, fractured, stunned)
 - [ ] Basic animations: idle, move, attack, hit reaction, stagger, fall, yield
 - [ ] Terrain rendering: mud patches, pillars, pits visible on grid
+- [ ] Placeholder audio from day one: hit sounds, block sounds, crowd murmur, footsteps, yield cry (even free assets - combat feel is 50% audio)
 
 ---
 
@@ -199,12 +231,26 @@ Data-driven spell definitions.
 - [ ] Recovery time estimates based on severity + current body state
 
 ### Chronic BodySim Mode (new BodySim features)
+
+#### Growth (the power fantasy)
+- [ ] Muscle hypertrophy: training increases muscle mass, strength, force output
+- [ ] Bone densification: load-bearing training increases density and fracture resistance
+- [ ] Nerve conductivity training: practice improves signal speed, lowers heat per cast
+- [ ] Pain tolerance: combat experience raises pain thresholds (not nerves dying - toughening up)
+- [ ] Cardiovascular conditioning: stamina pool grows, recovery between rounds improves
+- [ ] Immune hardening: surviving infections builds resistance
+- [ ] A veteran gladiator should be measurably, visibly superior to a rookie in every system
+
+#### Healing & Recovery
 - [ ] Time-based healing: bones knit, wounds close, blood replenishes over days/weeks
 - [ ] Infection risk from open wounds (ImmuneSystem fights it over time)
-- [ ] Atrophy of disabled/unused limbs
-- [ ] Scarring: permanent skin integrity reduction (charisma modifier for crowd)
-- [ ] Nerve damage persistence: reduced conductivity (mage power loss)
-- [ ] Overtraining injuries: pushing training too hard -> muscle tears, stress fractures
+- [ ] Scarring: mostly cosmetic. Visual storytelling on the body diagram. Minimal gameplay impact.
+- [ ] Nerve damage persistence: reduced conductivity (mage power loss - the real cost of overload)
+
+#### Decay (only when relevant)
+- [ ] Atrophy of disabled/unused limbs (not resting injured ones - grace period)
+- [ ] The Rust: healthy idle gladiators lose conditioning. Injured ones are exempt.
+- [ ] Overtraining injuries: pushing too hard -> muscle tears, stress fractures (risk scales with intensity)
 
 ### Treatment System
 - [ ] Medicus assignment: assign doctor to injured gladiator
@@ -222,13 +268,30 @@ Data-driven spell definitions.
 ---
 
 ## Phase 4: Ludus Management (Weeks 12-14)
-**Goal**: Functional management between fights. Skeleton of every system, deep on none.
+**Goal**: Functional management between fights. Match scheduling drives the phase.
+
+### Match Scheduling (the backbone of management)
+- [ ] Match board: upcoming matches announced with details
+  - Format (1v1, 2v2, 3v3, free-for-all), date, arena, rewards
+  - Opponent ludus and known info about their fighters
+- [ ] Player signs up for matches, assigns gladiator candidates
+- [ ] Prep countdown: days until match drive all other decisions
+  - "2v2 in 5 days, prize 500g vs Ludus Varro. Who do I send? Are they healthy? What gear?"
+- [ ] Match frequency scales with tier (fewer early, more later)
+- [ ] Player chooses when to fight - no forced schedule early game (avoids death spiral with small roster)
+- [ ] Securing matches: prestigious bouts aren't just available - you lobby, bribe, and politic for them
+  - Low tier: open sign-up, anyone can enter
+  - Mid tier: need magistrate's favor or prestige threshold to qualify
+  - High tier: invitation only - requires political connections, sponsor backing, or rival challenge
+  - Securing a slot in a high-tier match IS the management goal, fighting in it is the payoff
 
 ### Economy
 - [ ] Gold as primary currency
 - [ ] Income: match purses (base + crowd bonus + sponsor bonus)
-- [ ] Expenses: food, medicine, staff wages, facility upkeep, equipment
+- [ ] Expenses: food, medicine, staff wages, facility upkeep, equipment, commissions
 - [ ] Weekly budget cycle with summary
+- [ ] Competing money sinks: match entry fees for higher-tier bouts, bribes, facility upgrades, commissions
+- [ ] Debt system (skeleton): borrow from syndicate, interest compounds, they own you if you can't pay
 
 ### Facilities (level 1 only, upgrades later)
 - [ ] Cells: rest quality -> nervous system recovery rate
@@ -258,10 +321,23 @@ Data-driven spell definitions.
 ### Equipment
 - [ ] 6 slots: weapon, offhand/shield, head, chest, legs, accessory
 - [ ] Equipment defined in JSON: name, slot, weight, protection per body part, stat modifiers
-- [ ] Weapon types: sword, spear, axe, club, dagger, trident (different damage profiles)
+- [ ] Weight system: total equipment weight vs gladiator strength -> stamina drain, movement penalty
+- [ ] Weapon types: sword, spear, axe, club, dagger, trident, net (each with unique combat actions)
 - [ ] Armor: protection mapped to specific BodySim body parts
 - [ ] Mage gear: radiator pauldrons (cooling), grounding spear (heat discharge), anchor talisman
-- [ ] Buy/sell at market
+- [ ] Buy from market or commission from craftsmen (see world map)
+
+### World Map
+- [ ] City/region map showing ludus, arenas, merchants, blacksmiths, slave market, rivals
+- [ ] Order supplies: pick merchant, pick goods, pay, delivery takes time (courier travels on map)
+- [ ] Commission equipment: order custom gear from blacksmith, specify requirements, wait for delivery
+- [ ] Watch deliveries arrive (courier moves on map day by day)
+- [ ] Spatial sabotage opportunities: intercept rival shipments, bribe their suppliers (post-MVP)
+- [ ] Espionage: send scout to rival ludus, costs gold + time, returns intel on their fighters
+- [ ] Delivery events: rare random events on courier routes (ambush, delay, damage, theft)
+  - Not frequent enough to be annoying, impactful enough to be memorable
+  - Creates emergent stories ("bandits stole our shipment, send someone to retrieve it")
+- [ ] Gives the game a sense of place beyond menu screens
 
 ### Recruitment
 - [ ] Slave market: rotating roster of randomly generated gladiators, price by quality
@@ -327,10 +403,10 @@ Data-driven spell definitions.
 - [ ] Insulted status: legend in a mud pit = morale drop, lazy fighting
 - [ ] The Rust: not fighting causes physical degradation (fat gain, slow reflexes)
 
-### Anti-Spam
-- [ ] Overuse of magic = censor pressure
-- [ ] Excessive brutality = magistrate attention
-- [ ] Crowd gets bored of repeated strategies
+### Escalation (not anti-spam)
+- [ ] Higher tier arenas expect more spectacle - Tier 1 crowd happy with basics
+- [ ] Overuse of magic in high-tier arenas = censor pressure (political consequence, not crowd boredom)
+- [ ] Excessive brutality = magistrate attention (political, not mechanical punishment)
 
 ---
 

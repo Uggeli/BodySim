@@ -23,6 +23,7 @@ namespace BodySim
     // Skeletal events
     public readonly record struct FractureEvent(BodyPartType BodyPartType) : IEvent;
     public readonly record struct BoneSetEvent(BodyPartType BodyPartType) : IEvent; // Reset/splint a fractured bone
+    public readonly record struct AmputationEvent(BodyPartType BodyPartType) : IEvent; // Body part physically removed
     public readonly record struct ResourceStarvationEvent(BodyPartType BodyPartType, BodyResourceType ResourceType, float Deficit) : IEvent;
 
     // Circulatory events

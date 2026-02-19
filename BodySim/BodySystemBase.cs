@@ -46,6 +46,12 @@ public abstract class BodySystemBase(BodySystemType bodySystemType, BodyResource
         }
         return null;
     }
+
+    /// <summary>Removes a node from this system (amputation). Returns true if the node existed.</summary>
+    public bool RemoveNode(BodyPartType bodyPartType)
+    {
+        return Statuses.Remove(bodyPartType);
+    }
     
     public virtual void MetabolicUpdate()
     {

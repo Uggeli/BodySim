@@ -23,6 +23,7 @@ public class IntegumentarySystem : BodySystemBase, IListener
         eventHub.RegisterListener<BandageEvent>(this);
         eventHub.RegisterListener<RemoveBandageEvent>(this);
         eventHub.RegisterListener<PropagateEffectEvent>(this);
+        eventHub.RegisterListener<AmputationEvent>(this);
     }
 
     // ── Priority message handling ──────────────────────────────────
@@ -59,6 +60,7 @@ public class IntegumentarySystem : BodySystemBase, IListener
             case BandageEvent bae: HandleBandage(bae); break;
             case RemoveBandageEvent rbe: HandleRemoveBandage(rbe); break;
             case PropagateEffectEvent pe: HandlePropagateEffect(pe); break;
+            case AmputationEvent ae: RemoveNode(ae.BodyPartType); break;
         }
     }
 

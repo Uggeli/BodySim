@@ -17,11 +17,12 @@ public class BoneNode: BodyPartNodeBase, IResourceNeedComponent, IResourceProduc
     /// <summary>Base calcium need for healing — increases when damaged.</summary>
     public float CalciumHealingDemand { get; set; }
 
-    public BoneNode(BodyPartType bodyPartType, bool isWeightBearing = false, bool hasMarrow = false)
+    public BoneNode(BodyPartType bodyPartType, bool isWeightBearing = false, bool hasMarrow = false,
+        float boneDensityMax = 100f, float integrityMax = 100f)
         : base(bodyPartType, [
             new BodyComponentBase(100, 100, 0, BodyComponentType.Health),
-            new BodyComponentBase(100, 100, 0.05f, BodyComponentType.BoneDensity),
-            new BodyComponentBase(100, 100, 0.1f, BodyComponentType.Integrity),
+            new BodyComponentBase(boneDensityMax, boneDensityMax, 0.05f, BodyComponentType.BoneDensity),
+            new BodyComponentBase(integrityMax, integrityMax, 0.1f, BodyComponentType.Integrity),
         ])
     {
         IsWeightBearing = isWeightBearing;

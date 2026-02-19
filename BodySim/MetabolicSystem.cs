@@ -56,6 +56,7 @@ public class MetabolicSystem : BodySystemBase
         eventHub.RegisterListener<FeedEvent>(this);
         eventHub.RegisterListener<HydrateEvent>(this);
         eventHub.RegisterListener<PropagateEffectEvent>(this);
+        eventHub.RegisterListener<AmputationEvent>(this);
     }
 
     // ── Event handling ───────────────────────────────────────
@@ -71,6 +72,7 @@ public class MetabolicSystem : BodySystemBase
             case FeedEvent fe: HandleFeed(fe); break;
             case HydrateEvent he: HandleHydrate(he); break;
             case PropagateEffectEvent pe: HandlePropagateEffect(pe); break;
+            case AmputationEvent ae: RemoveNode(ae.BodyPartType); break;
         }
     }
 

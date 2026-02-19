@@ -27,9 +27,12 @@ public class ImmuneSystem : BodySystemBase
         BodyPartType.RightThigh,
     ];
 
-    public ImmuneSystem(BodyResourcePool pool, EventHub eventHub)
+    private readonly BodyBlueprint? _blueprint;
+
+    public ImmuneSystem(BodyResourcePool pool, EventHub eventHub, BodyBlueprint? blueprint = null)
         : base(BodySystemType.Immune, pool, eventHub)
     {
+        _blueprint = blueprint;
         InitSystem();
         eventHub.RegisterListener<DamageEvent>(this);
         eventHub.RegisterListener<HealEvent>(this);
@@ -37,6 +40,7 @@ public class ImmuneSystem : BodySystemBase
         eventHub.RegisterListener<ToxinEvent>(this);
         eventHub.RegisterListener<CureEvent>(this);
         eventHub.RegisterListener<PropagateEffectEvent>(this);
+        eventHub.RegisterListener<AmputationEvent>(this);
     }
 
     // ── Event handling ─────────────────────────────────────────────
@@ -51,6 +55,7 @@ public class ImmuneSystem : BodySystemBase
             case ToxinEvent te:             HandleToxin(te); break;
             case CureEvent ce:              HandleCure(ce); break;
             case PropagateEffectEvent pe:   HandlePropagateEffect(pe); break;
+            case AmputationEvent ae:        RemoveNode(ae.BodyPartType); break;
         }
     }
 
@@ -190,7 +195,8 @@ public class ImmuneSystem : BodySystemBase
         foreach (BodyPartType partType in Enum.GetValues<BodyPartType>())
         {
             bool hasLymph = LymphNodeParts.Contains(partType);
-            Statuses[partType] = new ImmuneNode(partType, hasLymph);
+            Statuses[partType] = new ImmuneNode(partType, hasLymph,
+                _blueprint?.ImmunePotencyInitial ?? 100f);
         }
     }
 
